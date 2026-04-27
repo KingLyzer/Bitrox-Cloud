@@ -13,7 +13,7 @@ On a fresh server:
 ```bash
 git clone <your-repo-url> cloud
 cd cloud
-sudo bash scripts/install.sh --host 172.16.1.97 --port 11255
+sudo bash scripts/install.sh --host 127.0.0.1 --port 11255
 ```
 
 The installer:
