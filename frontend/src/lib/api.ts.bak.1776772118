@@ -1,0 +1,252 @@
+const rawApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:18080";
+const API_BASE_URL = rawApiBaseUrl.replace(/\/+$/, "");
+
+type ApiErrorBody = {
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  is_active?: boolean;
+};
+
+export type NodeRecord = {
+  id: string;
+  owner_user_id: string;
+  parent_id: string | null;
+  type: "file" | "folder";
+  name: string;
+  size_bytes: number;
+  mime_type?: string;
+  content_hash?: string;
+  current_version_id?: string;
+  current_version_no?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UploadSession = {
+  id: string;
+  owner_user_id: string;
+  target_type: "new_file" | "new_version";
+  target_node_id?: string;
+  parent_id: string | null;
+  file_name: string;
+  expected_size_bytes: number;
+  chunk_size_bytes: number;
+  expected_chunks: number;
+  status: string;
+  uploaded_bytes: number;
+  expires_at: string;
+};
+
+export type QuotaUsage = {
+  used_bytes: number;
+  limit_bytes: number;
+  remaining_bytes: number;
+  is_limit_exceeded: boolean;
+};
+
+type RequestOptions = {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  headers?: Record<string, string>;
+  body?: unknown;
+  rawBody?: BodyInit | null;
+};
+
+function buildUrl(path: string): string {
+  if (!path.startsWith("/")) {
+    return `${API_BASE_URL}/${path}`;
+  }
+  return `${API_BASE_URL}${path}`;
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(options.headers ?? {})
+  };
+
+  let body: BodyInit | null | undefined = options.rawBody;
+  if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(options.body);
+  }
+
+  const response = await fetch(buildUrl(path), {
+    method: options.method ?? "GET",
+    credentials: "include",
+    headers,
+    body
+  });
+
+  const contentType = response.headers.get("Content-Type") ?? "";
+  let payload: unknown = null;
+  if (contentType.includes("application/json")) {
+    payload = await response.json();
+  } else if (response.status !== 204) {
+    payload = await response.text().catch(() => "");
+  }
+
+  if (!response.ok) {
+    const errorBody = (payload as ApiErrorBody | null) ?? null;
+    const code = errorBody?.error?.code ?? `http_${response.status}`;
+    const message = errorBody?.error?.message ?? `Request failed with status ${response.status}`;
+    throw new ApiError(response.status, code, message);
+  }
+
+  return payload as T;
+}
+
+export function downloadUrlForNode(nodeID: string): string {
+  return buildUrl(`/api/v1/files/nodes/${nodeID}/download`);
+}
+
+export async function login(email: string, password: string): Promise<AuthUser> {
+  const result = await request<{ user: AuthUser }>("/api/v1/auth/login", {
+    method: "POST",
+    body: { email, password }
+  });
+  return result.user;
+}
+
+export async function refreshSession(csrfToken: string): Promise<AuthUser> {
+  const result = await request<{ user: AuthUser }>("/api/v1/auth/refresh", {
+    method: "POST",
+    headers: {
+      "X-CSRF-Token": csrfToken
+    }
+  });
+  return result.user;
+}
+
+export async function logout(csrfToken: string): Promise<void> {
+  await request<unknown>("/api/v1/auth/logout", {
+    method: "POST",
+    headers: {
+      "X-CSRF-Token": csrfToken
+    }
+  });
+}
+
+export async function fetchMe(): Promise<AuthUser> {
+  return request<AuthUser>("/api/v1/me");
+}
+
+export async function fetchQuota(): Promise<QuotaUsage> {
+  return request<QuotaUsage>("/api/v1/quota");
+}
+
+export async function listNodes(parentID: string | null): Promise<NodeRecord[]> {
+  const query = parentID ? `?parent_id=${encodeURIComponent(parentID)}` : "";
+  const result = await request<{ nodes: NodeRecord[] }>(`/api/v1/files/nodes${query}`);
+  return result.nodes;
+}
+
+export async function createFolder(name: string, parentID: string | null): Promise<NodeRecord> {
+  const result = await request<{ node: NodeRecord }>("/api/v1/files/folders", {
+    method: "POST",
+    body: {
+      name,
+      parent_id: parentID
+    }
+  });
+  return result.node;
+}
+
+export async function renameNode(nodeID: string, name: string): Promise<NodeRecord> {
+  const result = await request<{ node: NodeRecord }>(`/api/v1/files/nodes/${nodeID}/rename`, {
+    method: "PATCH",
+    body: {
+      name
+    }
+  });
+  return result.node;
+}
+
+export async function moveNode(nodeID: string, parentID: string | null): Promise<NodeRecord> {
+  const result = await request<{ node: NodeRecord }>(`/api/v1/files/nodes/${nodeID}/move`, {
+    method: "PATCH",
+    body: {
+      parent_id: parentID
+    }
+  });
+  return result.node;
+}
+
+export async function deleteNode(nodeID: string): Promise<void> {
+  await request<unknown>(`/api/v1/files/nodes/${nodeID}`, {
+    method: "DELETE"
+  });
+}
+
+export async function createUploadSession(input: {
+  fileName: string;
+  expectedSizeBytes: number;
+  chunkSizeBytes: number;
+  parentID: string | null;
+  idempotencyKey: string;
+}): Promise<UploadSession> {
+  const result = await request<{ upload_session: UploadSession }>("/api/v1/files/uploads", {
+    method: "POST",
+    headers: {
+      "Idempotency-Key": input.idempotencyKey
+    },
+    body: {
+      target_type: "new_file",
+      target_node_id: null,
+      parent_id: input.parentID,
+      file_name: input.fileName,
+      expected_size_bytes: input.expectedSizeBytes,
+      chunk_size_bytes: input.chunkSizeBytes
+    }
+  });
+  return result.upload_session;
+}
+
+export async function uploadChunk(input: {
+  uploadSessionID: string;
+  chunkIndex: number;
+  chunkBody: Blob;
+  chunkHash: string;
+}): Promise<UploadSession> {
+  const result = await request<{ upload_session: UploadSession }>(
+    `/api/v1/files/uploads/${input.uploadSessionID}/chunks/${input.chunkIndex}`,
+    {
+      method: "PUT",
+      headers: {
+        "X-Chunk-SHA256": input.chunkHash
+      },
+      rawBody: input.chunkBody
+    }
+  );
+  return result.upload_session;
+}
+
+export async function finalizeUploadSession(uploadSessionID: string): Promise<void> {
+  await request<unknown>(`/api/v1/files/uploads/${uploadSessionID}/finalize`, {
+    method: "POST"
+  });
+}
+
+export async function abortUploadSession(uploadSessionID: string): Promise<void> {
+  await request<unknown>(`/api/v1/files/uploads/${uploadSessionID}/abort`, {
+    method: "POST"
+  });
+}

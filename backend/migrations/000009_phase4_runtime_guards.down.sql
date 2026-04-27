@@ -1,0 +1,1 @@
+-- no-op: runtime guards are intentionally idempotent safety rails.

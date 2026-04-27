@@ -1,0 +1,21 @@
+# System
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Node
+frontend/node_modules
+frontend/.next
+
+# Go
+backend/bin
+backend/coverage.out
+
+# Data
+backend/data
+
+# IDE
+.idea
+.vscode

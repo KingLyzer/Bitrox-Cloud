@@ -1,0 +1,1 @@
+-- no-op for extension rollback

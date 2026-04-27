@@ -1,0 +1,32 @@
+{
+  "name": "cloud-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0 --port 3000",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0 --port 3000",
+    "lint": "next lint",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.5.0",
+    "next": "14.2.33",
+    "next-themes": "0.4.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.2",
+    "@types/react": "18.3.21",
+    "@types/react-dom": "18.3.7",
+    "@playwright/test": "^1.55.0",
+    "autoprefixer": "10.4.21",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.33",
+    "postcss": "8.5.3",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.8.3"
+  }
+}
