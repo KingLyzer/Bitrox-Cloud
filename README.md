@@ -7,14 +7,30 @@ Self-hosted private cloud platform with production-style containers:
 - `postgres`
 - `redis`
 
-## One-Command Install (Debian/Ubuntu)
-On a fresh server:
+On a fresh Ubuntu/Debian server, install directly from GitHub into `/var/www/bitrocloud`:
 
 ```bash
+<<<<<<< HEAD
 git clone <your-repo-url> cloud
 cd cloud
 sudo bash scripts/install.sh --host 127.0.0.1 --port 11255
+=======
+curl -fsSL https://raw.githubusercontent.com/<your-org>/<your-repo>/main/scripts/bootstrap-ubuntu.sh -o /tmp/bootstrap-ubuntu.sh
+sudo bash /tmp/bootstrap-ubuntu.sh --repo https://github.com/<your-org>/<your-repo>.git --branch main --host <server-ip-or-domain> --port 11255
+>>>>>>> c9a13d0 (Bitrox Cloud: Kurulum scriptleri güncellendi ve Ubuntu bootstrap desteği eklendi)
 ```
+
+This flow:
+- clones/updates the project at `/var/www/bitrocloud`
+- installs missing dependencies
+- configures firewall rules (`ufw allow 22`, app port, API port)
+- installs and starts Docker/Compose services
+- runs DB migrations
+- builds and starts API/worker/frontend
+- waits for health endpoints
+- prepares default bootstrap admin credentials:
+  - email: `admin@example.com`
+  - password: `Passw0rd!123`
 
 The installer:
 1. Detects Docker/Compose and avoids unnecessary Docker reinstall if already present.
@@ -25,6 +41,13 @@ The installer:
 6. Starts infra services, runs migrations, builds/starts app services.
 7. Waits for backend health and frontend reachability.
 8. Prints final URLs and bootstrap admin credentials.
+
+If you already cloned the repo manually, run:
+
+```bash
+cd /var/www/bitrocloud
+sudo bash scripts/install.sh --host <server-ip-or-domain> --port 11255
+```
 
 ## Doctor / Verification
 Run:
@@ -166,5 +189,3 @@ Before public internet exposure:
    - `APP_ENV=production`
    - `APP_COOKIE_SECURE=true`
    - `APP_TRUSTED_PROXY_CIDRS=<proxy CIDR>`
-# bitrox
-# bitrox

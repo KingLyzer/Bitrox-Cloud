@@ -12,8 +12,11 @@ FRONTEND_PORT=""
 API_PORT="18080"
 ADMIN_EMAIL=""
 ADMIN_PASSWORD=""
+DEFAULT_ADMIN_EMAIL="admin@example.com"
+DEFAULT_ADMIN_PASSWORD="Passw0rd!123"
 PUBLIC_ORIGIN=""
 SKIP_DEPS="0"
+CONFIGURE_UFW="1"
 COMPOSE_MODE=""
 
 info() {
@@ -41,6 +44,7 @@ Options:
   --public-origin <origin>     Extra frontend origin for CORS (e.g. http://tss.example.com:11255).
   --admin-email <email>        Bootstrap admin email override.
   --admin-password <password>  Bootstrap admin password override.
+  --no-ufw                     Skip ufw rule management.
   --skip-deps                  Skip apt dependency installation checks.
   -h, --help                   Show this help.
 EOF
@@ -113,6 +117,7 @@ install_missing_packages_if_needed() {
   if ! have_cmd jq; then base_packages+=("jq"); fi
   if ! have_cmd openssl; then base_packages+=("openssl"); fi
   if ! have_cmd ss; then base_packages+=("iproute2"); fi
+  if ! have_cmd ufw; then base_packages+=("ufw"); fi
   if [[ ${#base_packages[@]} -gt 0 ]]; then
     need_update="1"
   fi
@@ -197,15 +202,6 @@ get_env_value() {
 
 random_hex_32() {
   openssl rand -hex 32
-}
-
-random_password() {
-  local value
-  value="$(openssl rand -base64 36 | tr -dc 'A-Za-z0-9@#%+=._-' | head -c 28)"
-  if [[ -z "${value}" ]]; then
-    value="$(openssl rand -hex 16)"
-  fi
-  printf '%s' "${value}"
 }
 
 trim_spaces() {
@@ -363,6 +359,10 @@ while [[ $# -gt 0 ]]; do
       ADMIN_PASSWORD="${2:-}"
       shift 2
       ;;
+    --no-ufw)
+      CONFIGURE_UFW="0"
+      shift
+      ;;
     --skip-deps)
       SKIP_DEPS="1"
       shift
@@ -435,6 +435,28 @@ done
 ensure_port_available_or_owned "${FRONTEND_PORT}" "frontend"
 ensure_port_available_or_owned "${API_PORT}" "api"
 
+configure_ufw() {
+  if [[ "${CONFIGURE_UFW}" != "1" ]]; then
+    info "Skipping UFW setup (--no-ufw)."
+    return 0
+  fi
+
+  if ! have_cmd ufw; then
+    warn "ufw command not found; skipping firewall setup."
+    return 0
+  fi
+
+  info "Configuring UFW rules (22/tcp, ${FRONTEND_PORT}/tcp, ${API_PORT}/tcp)."
+  ufw allow 22/tcp >/dev/null 2>&1 || true
+  ufw allow "${FRONTEND_PORT}/tcp" >/dev/null 2>&1 || true
+  ufw allow "${API_PORT}/tcp" >/dev/null 2>&1 || true
+
+  # enable firewall idempotently; keep non-fatal to avoid blocking install on edge environments
+  ufw --force enable >/dev/null 2>&1 || warn "Could not enable ufw automatically; configure firewall manually."
+}
+
+configure_ufw
+
 set_env_value "APP_HOST" "${APP_HOST}"
 set_env_value "APP_PORT" "${APP_PORT}"
 set_env_value "FRONTEND_PORT" "${FRONTEND_PORT}"
@@ -462,17 +484,24 @@ set_env_value "APP_HTTP_ADDR" ":8080"
 set_env_value "APP_ENV" "development"
 set_env_value "APP_COOKIE_SECURE" "false"
 
-if [[ -n "${ADMIN_EMAIL}" ]]; then
-  set_env_value "APP_BOOTSTRAP_ADMIN_EMAIL" "${ADMIN_EMAIL}"
-fi
-if [[ -n "${ADMIN_PASSWORD}" ]]; then
-  set_env_value "APP_BOOTSTRAP_ADMIN_PASSWORD" "${ADMIN_PASSWORD}"
-else
-  current_admin_password="$(get_env_value APP_BOOTSTRAP_ADMIN_PASSWORD)"
-  if [[ -z "${current_admin_password}" || "${current_admin_password}" == "change-this-very-strong-password" ]]; then
-    set_env_value "APP_BOOTSTRAP_ADMIN_PASSWORD" "$(random_password)"
+if [[ -z "${ADMIN_EMAIL}" ]]; then
+  current_admin_email="$(get_env_value APP_BOOTSTRAP_ADMIN_EMAIL)"
+  if [[ -z "${current_admin_email}" ]]; then
+    ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL}"
+  else
+    ADMIN_EMAIL="${current_admin_email}"
   fi
 fi
+if [[ -z "${ADMIN_PASSWORD}" ]]; then
+  current_admin_password="$(get_env_value APP_BOOTSTRAP_ADMIN_PASSWORD)"
+  if [[ -z "${current_admin_password}" || "${current_admin_password}" == "change-this-very-strong-password" ]]; then
+    ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD}"
+  else
+    ADMIN_PASSWORD="${current_admin_password}"
+  fi
+fi
+set_env_value "APP_BOOTSTRAP_ADMIN_EMAIL" "${ADMIN_EMAIL}"
+set_env_value "APP_BOOTSTRAP_ADMIN_PASSWORD" "${ADMIN_PASSWORD}"
 
 current_master_key="$(get_env_value APP_MASTER_KEY)"
 if [[ -z "${current_master_key}" || "${current_master_key}" == "replace-with-at-least-32-characters-secret" || ${#current_master_key} -lt 32 ]]; then
@@ -565,5 +594,5 @@ Security guidance:
 Next steps:
 1) Run diagnostics: bash scripts/doctor.sh
 2) Tail logs: docker compose logs -f api worker frontend
-3) Rotate bootstrap admin password after first login.
+3) Change bootstrap admin password in production.
 EOF
