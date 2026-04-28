@@ -19,11 +19,12 @@ type PasswordHasher interface {
 }
 
 type AdminSeedInput struct {
-	Email      string
-	Password   string
-	DisplayName string
-	Role       identity.Role
-	QuotaBytes *int64
+	Email             string
+	Password          string
+	DisplayName       string
+	PreferredLanguage *string
+	Role              identity.Role
+	QuotaBytes        *int64
 }
 
 type AdminSeeder struct {
@@ -71,14 +72,20 @@ func (s *AdminSeeder) Ensure(ctx context.Context, input AdminSeedInput) error {
 	if displayName == "" {
 		displayName = "Admin"
 	}
+	preferredLanguage := input.PreferredLanguage
+	if preferredLanguage == nil {
+		defaultLang := "en"
+		preferredLanguage = &defaultLang
+	}
 
 	_, err = s.users.Create(ctx, identity.CreateUserInput{
-		Email:        email,
-		DisplayName:  displayName,
-		Role:         role,
-		PasswordHash: passwordHash,
-		QuotaBytes:   input.QuotaBytes,
-		IsActive:     true,
+		Email:             email,
+		DisplayName:       displayName,
+		PreferredLanguage: preferredLanguage,
+		Role:              role,
+		PasswordHash:      passwordHash,
+		QuotaBytes:        input.QuotaBytes,
+		IsActive:          true,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap admin: %w", err)

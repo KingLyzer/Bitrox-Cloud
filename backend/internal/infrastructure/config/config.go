@@ -79,7 +79,7 @@ func Load() (Config, error) {
 		RedisURL:               getEnv("APP_REDIS_URL", ""),
 		StorageLocalRoot:       getEnv("APP_STORAGE_LOCAL_ROOT", "./data/storage"),
 		MasterKey:              getEnv("APP_MASTER_KEY", ""),
-		JWTSigningKey:          getEnv("APP_JWT_SIGNING_KEY", ""),
+		JWTSigningKey:          getFirstNonEmptyEnv([]string{"APP_JWT_SIGNING_KEY", "APP_JWT_SECRET"}, ""),
 		JWTIssuer:              getEnv("APP_JWT_ISSUER", "cloud-api"),
 		JWTAudience:            getEnv("APP_JWT_AUDIENCE", "cloud-web"),
 		CookieDomain:           getEnv("APP_COOKIE_DOMAIN", ""),
@@ -305,6 +305,16 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func getFirstNonEmptyEnv(keys []string, fallback string) string {
+	for _, key := range keys {
+		v := strings.TrimSpace(os.Getenv(strings.TrimSpace(key)))
+		if v != "" {
+			return v
+		}
+	}
+	return fallback
 }
 
 func getInt(key string, fallback int) (int, error) {

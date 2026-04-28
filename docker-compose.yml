@@ -37,12 +37,10 @@ services:
       - .env
     volumes:
       - ./backend/migrations:/migrations:ro
-    entrypoint: ["/bin/sh", "-ec"]
+      - ./scripts:/scripts:ro
+    entrypoint: ["/bin/bash", "-ec"]
     command: |
-      for migration in /migrations/*.up.sql; do
-        echo "Applying migration: $$migration"
-        psql "$$APP_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$migration"
-      done
+      bash /scripts/migrate.sh
 
   api:
     build:

@@ -58,12 +58,14 @@ func main() {
 	}
 
 	adminSeeder := bootstrap.NewAdminSeeder(userRepo, password.NewArgon2IDHasher())
+	defaultAdminLanguage := "en"
 	if err := adminSeeder.Ensure(ctx, bootstrap.AdminSeedInput{
-		Email:       cfg.BootstrapAdminEmail,
-		Password:    cfg.BootstrapAdminPassword,
-		DisplayName: cfg.BootstrapAdminName,
-		Role:        identity.Role(cfg.BootstrapAdminRole),
-		QuotaBytes:  nil,
+		Email:             cfg.BootstrapAdminEmail,
+		Password:          cfg.BootstrapAdminPassword,
+		DisplayName:       cfg.BootstrapAdminName,
+		PreferredLanguage: &defaultAdminLanguage,
+		Role:              identity.Role(cfg.BootstrapAdminRole),
+		QuotaBytes:        nil,
 	}); err != nil {
 		log.Error("admin bootstrap failed", slog.Any("error", err))
 		os.Exit(1)

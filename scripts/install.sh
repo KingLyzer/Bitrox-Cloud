@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -204,6 +204,38 @@ random_hex_32() {
   openssl rand -hex 32
 }
 
+sql_escape_literal() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+parse_db_user_from_url() {
+  local url="$1"
+  if [[ "${url}" =~ ^[a-zA-Z0-9+.-]+://([^:@/]+)(:[^@/]*)?@ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf ''
+}
+
+parse_db_password_from_url() {
+  local url="$1"
+  if [[ "${url}" =~ ^[a-zA-Z0-9+.-]+://[^:@/]+:([^@/]*)@ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf ''
+}
+
+parse_db_name_from_url() {
+  local url="$1"
+  local after_scheme="${url#*://}"
+  local after_at="${after_scheme#*@}"
+  local path_part="${after_at#*/}"
+  path_part="${path_part%%\?*}"
+  path_part="${path_part%%/*}"
+  printf '%s' "${path_part}"
+}
+
 trim_spaces() {
   local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
@@ -317,6 +349,42 @@ wait_for_http() {
     fi
     sleep 2
   done
+}
+
+ensure_database_and_privileges() {
+  local superuser="$1"
+  local db_name="$2"
+  local app_user="$3"
+  local app_password="$4"
+
+  local db_name_sql app_user_sql
+  db_name_sql="$(sql_escape_literal "${db_name}")"
+  app_user_sql="$(sql_escape_literal "${app_user}")"
+
+  info "Ensuring database '${db_name}' exists."
+  compose exec -T postgres psql -U "${superuser}" -d postgres -v ON_ERROR_STOP=1 -c "SELECT 1 FROM pg_database WHERE datname='${db_name_sql}'" >/dev/null
+  if ! compose exec -T postgres psql -U "${superuser}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${db_name_sql}'" | grep -q 1; then
+    compose exec -T postgres psql -U "${superuser}" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${db_name}\";"
+  fi
+
+  if ! compose exec -T postgres psql -U "${superuser}" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${app_user_sql}'" | grep -q 1; then
+    if [[ -n "${app_password}" ]]; then
+      local app_password_sql
+      app_password_sql="$(sql_escape_literal "${app_password}")"
+      compose exec -T postgres psql -U "${superuser}" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE \"${app_user}\" LOGIN PASSWORD '${app_password_sql}';"
+    else
+      compose exec -T postgres psql -U "${superuser}" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE \"${app_user}\" LOGIN;"
+    fi
+  fi
+
+  info "Applying grants and ownership for app user '${app_user}'."
+  compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE \"${db_name}\" TO \"${app_user}\";"
+  compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "GRANT USAGE, CREATE ON SCHEMA public TO \"${app_user}\";"
+  compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"${app_user}\";"
+  compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"${app_user}\";"
+  compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"${app_user}\";"
+  compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"${app_user}\";"
+  compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "DO \$\$ DECLARE r RECORD; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO \"${app_user}\"', r.tablename); END LOOP; FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname='public' LOOP EXECUTE format('ALTER SEQUENCE public.%I OWNER TO \"${app_user}\"', r.sequencename); END LOOP; END \$\$;"
 }
 
 print_failure_diagnostics() {
@@ -484,6 +552,11 @@ set_env_value "APP_HTTP_ADDR" ":8080"
 set_env_value "APP_ENV" "development"
 set_env_value "APP_COOKIE_SECURE" "false"
 
+current_cookie_domain="$(get_env_value APP_COOKIE_DOMAIN)"
+if [[ "${current_cookie_domain}" == "localhost" || "${current_cookie_domain}" == "127.0.0.1" ]]; then
+  set_env_value "APP_COOKIE_DOMAIN" ""
+fi
+
 if [[ -z "${ADMIN_EMAIL}" ]]; then
   current_admin_email="$(get_env_value APP_BOOTSTRAP_ADMIN_EMAIL)"
   if [[ -z "${current_admin_email}" ]]; then
@@ -510,7 +583,16 @@ fi
 
 current_jwt_key="$(get_env_value APP_JWT_SIGNING_KEY)"
 if [[ -z "${current_jwt_key}" || "${current_jwt_key}" == "replace-with-at-least-32-characters-jwt-secret" || ${#current_jwt_key} -lt 32 ]]; then
-  set_env_value "APP_JWT_SIGNING_KEY" "$(random_hex_32)"
+  legacy_jwt_secret="$(get_env_value APP_JWT_SECRET)"
+  if [[ -n "${legacy_jwt_secret}" && ${#legacy_jwt_secret} -ge 32 ]]; then
+    set_env_value "APP_JWT_SIGNING_KEY" "${legacy_jwt_secret}"
+  else
+    generated_jwt_secret="$(random_hex_32)"
+    set_env_value "APP_JWT_SIGNING_KEY" "${generated_jwt_secret}"
+    set_env_value "APP_JWT_SECRET" "${generated_jwt_secret}"
+  fi
+else
+  set_env_value "APP_JWT_SECRET" "${current_jwt_key}"
 fi
 
 pg_db="$(get_env_value POSTGRES_DB)"
@@ -557,8 +639,21 @@ compose up -d postgres redis
 wait_for_service_health "postgres" 180
 wait_for_service_health "redis" 180
 
+db_url="$(get_env_value APP_DATABASE_URL)"
+app_db_user="$(parse_db_user_from_url "${db_url}")"
+app_db_name="$(parse_db_name_from_url "${db_url}")"
+app_db_password="$(parse_db_password_from_url "${db_url}")"
+if [[ -z "${app_db_user}" ]]; then
+  app_db_user="${pg_user}"
+fi
+if [[ -z "${app_db_name}" ]]; then
+  app_db_name="${pg_db}"
+fi
+ensure_database_and_privileges "${pg_user}" "${app_db_name}" "${app_db_user}" "${app_db_password}"
+
 info "Applying database migrations in order."
 compose --profile tools run --rm migrate
+ensure_database_and_privileges "${pg_user}" "${app_db_name}" "${app_db_user}" "${app_db_password}"
 
 info "Building application images (api, worker, frontend)."
 compose build --pull api worker frontend

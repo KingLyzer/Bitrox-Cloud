@@ -60,13 +60,14 @@ LIMIT 1
 
 func (r *UserRepository) Create(ctx context.Context, input identity.CreateUserInput) (identity.User, error) {
 	const query = `
-INSERT INTO users (email, display_name, role, password_hash, quota_bytes, is_active)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO users (email, display_name, preferred_language, role, password_hash, quota_bytes, is_active)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, email, display_name, preferred_language, role, password_hash, quota_bytes, is_active, deleted_at, created_at, updated_at
 `
 	row := r.pool.QueryRow(ctx, query,
 		identity.NormalizeEmail(input.Email),
 		input.DisplayName,
+		input.PreferredLanguage,
 		string(input.Role),
 		input.PasswordHash,
 		input.QuotaBytes,

@@ -30,12 +30,13 @@ type User struct {
 }
 
 type CreateUserInput struct {
-	Email        string
-	DisplayName  string
-	Role         Role
-	PasswordHash string
-	QuotaBytes   *int64
-	IsActive     bool
+	Email             string
+	DisplayName       string
+	PreferredLanguage *string
+	Role              Role
+	PasswordHash      string
+	QuotaBytes        *int64
+	IsActive          bool
 }
 
 type UpdateUserInput struct {

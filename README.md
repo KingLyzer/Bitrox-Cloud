@@ -7,17 +7,12 @@ Self-hosted private cloud platform with production-style containers:
 - `postgres`
 - `redis`
 
+## One-Command Install (Debian/Ubuntu)
 On a fresh Ubuntu/Debian server, install directly from GitHub into `/var/www/bitrocloud`:
 
 ```bash
-<<<<<<< HEAD
-git clone <your-repo-url> cloud
-cd cloud
-sudo bash scripts/install.sh --host 127.0.0.1 --port 11255
-=======
 curl -fsSL https://raw.githubusercontent.com/<your-org>/<your-repo>/main/scripts/bootstrap-ubuntu.sh -o /tmp/bootstrap-ubuntu.sh
 sudo bash /tmp/bootstrap-ubuntu.sh --repo https://github.com/<your-org>/<your-repo>.git --branch main --host <server-ip-or-domain> --port 11255
->>>>>>> c9a13d0 (Bitrox Cloud: Kurulum scriptleri güncellendi ve Ubuntu bootstrap desteği eklendi)
 ```
 
 This flow:

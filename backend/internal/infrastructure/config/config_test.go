@@ -44,10 +44,27 @@ func TestLoadRequiresJWTSigningKey(t *testing.T) {
 	t.Setenv("APP_REDIS_URL", "redis://localhost:6379/0")
 	t.Setenv("APP_MASTER_KEY", "0123456789abcdef0123456789abcdef")
 	_ = os.Unsetenv("APP_JWT_SIGNING_KEY")
+	_ = os.Unsetenv("APP_JWT_SECRET")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatalf("expected an error when APP_JWT_SIGNING_KEY is missing")
+	}
+}
+
+func TestLoadUsesLegacyJWTSecretFallback(t *testing.T) {
+	t.Setenv("APP_DATABASE_URL", "postgres://postgres:postgres@localhost:5432/cloud?sslmode=disable")
+	t.Setenv("APP_REDIS_URL", "redis://localhost:6379/0")
+	t.Setenv("APP_MASTER_KEY", "0123456789abcdef0123456789abcdef")
+	_ = os.Unsetenv("APP_JWT_SIGNING_KEY")
+	t.Setenv("APP_JWT_SECRET", "abcdef0123456789abcdef0123456789")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.JWTSigningKey != "abcdef0123456789abcdef0123456789" {
+		t.Fatalf("expected APP_JWT_SECRET fallback to be used")
 	}
 }
 
