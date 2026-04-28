@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
     password_hash TEXT NOT NULL,
-    quota_bytes BIGINT NULL CHECK (quota_bytes IS NULL OR quota_bytes > 0),
+    quota_bytes BIGINT NULL DEFAULT 5368709120 CHECK (quota_bytes IS NULL OR quota_bytes > 0),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

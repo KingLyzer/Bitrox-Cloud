@@ -387,6 +387,18 @@ ensure_database_and_privileges() {
   compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "DO \$\$ DECLARE r RECORD; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP EXECUTE format('ALTER TABLE public.%I OWNER TO \"${app_user}\"', r.tablename); END LOOP; FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname='public' LOOP EXECUTE format('ALTER SEQUENCE public.%I OWNER TO \"${app_user}\"', r.sequencename); END LOOP; END \$\$;"
 }
 
+reassign_owned_objects() {
+  local superuser="$1"
+  local db_name="$2"
+  local app_user="$3"
+  local from_owner="${4:-postgres}"
+  if [[ "${app_user}" == "${from_owner}" ]]; then
+    return 0
+  fi
+  info "Reassigning objects owned by '${from_owner}' to '${app_user}' in database '${db_name}'."
+  compose exec -T postgres psql -U "${superuser}" -d "${db_name}" -v ON_ERROR_STOP=1 -c "REASSIGN OWNED BY \"${from_owner}\" TO \"${app_user}\";" || warn "REASSIGN OWNED BY ${from_owner} TO ${app_user} failed; continuing with explicit grants."
+}
+
 print_failure_diagnostics() {
   warn "Installation failed. Collecting diagnostics..."
   if [[ -f "${ENV_FILE}" ]] && have_cmd docker && [[ -n "${COMPOSE_MODE}" ]]; then
@@ -653,6 +665,7 @@ ensure_database_and_privileges "${pg_user}" "${app_db_name}" "${app_db_user}" "$
 
 info "Applying database migrations in order."
 compose --profile tools run --rm migrate
+reassign_owned_objects "${pg_user}" "${app_db_name}" "${app_db_user}" "postgres"
 ensure_database_and_privileges "${pg_user}" "${app_db_name}" "${app_db_user}" "${app_db_password}"
 
 info "Building application images (api, worker, frontend)."

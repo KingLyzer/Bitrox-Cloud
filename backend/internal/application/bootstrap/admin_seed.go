@@ -7,11 +7,14 @@ import (
 	"strings"
 
 	"cloud/backend/internal/domain/identity"
+	"github.com/google/uuid"
 )
 
 type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (identity.User, error)
 	Create(ctx context.Context, input identity.CreateUserInput) (identity.User, error)
+	Update(ctx context.Context, input identity.UpdateUserInput) (identity.User, error)
+	UpdateProfile(ctx context.Context, userID uuid.UUID, displayName string, preferredLanguage *string) (identity.User, error)
 }
 
 type PasswordHasher interface {
@@ -55,11 +58,8 @@ func (s *AdminSeeder) Ensure(ctx context.Context, input AdminSeedInput) error {
 		return fmt.Errorf("invalid bootstrap admin role: %s", role)
 	}
 
-	_, err := s.users.GetByEmail(ctx, email)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, identity.ErrUserNotFound) {
+	existing, err := s.users.GetByEmail(ctx, email)
+	if err != nil && !errors.Is(err, identity.ErrUserNotFound) {
 		return fmt.Errorf("lookup bootstrap admin: %w", err)
 	}
 
@@ -78,17 +78,47 @@ func (s *AdminSeeder) Ensure(ctx context.Context, input AdminSeedInput) error {
 		preferredLanguage = &defaultLang
 	}
 
-	_, err = s.users.Create(ctx, identity.CreateUserInput{
-		Email:             email,
-		DisplayName:       displayName,
-		PreferredLanguage: preferredLanguage,
-		Role:              role,
-		PasswordHash:      passwordHash,
-		QuotaBytes:        input.QuotaBytes,
-		IsActive:          true,
-	})
-	if err != nil {
-		return fmt.Errorf("create bootstrap admin: %w", err)
+	if errors.Is(err, identity.ErrUserNotFound) {
+		_, createErr := s.users.Create(ctx, identity.CreateUserInput{
+			Email:             email,
+			DisplayName:       displayName,
+			PreferredLanguage: preferredLanguage,
+			Role:              role,
+			PasswordHash:      passwordHash,
+			QuotaBytes:        input.QuotaBytes,
+			IsActive:          true,
+		})
+		if createErr != nil {
+			return fmt.Errorf("create bootstrap admin: %w", createErr)
+		}
+		return nil
+	}
+
+	needsIdentityUpdate := !existing.IsActive || existing.Role != role || strings.TrimSpace(existing.DisplayName) == ""
+	if needsIdentityUpdate {
+		targetDisplayName := strings.TrimSpace(existing.DisplayName)
+		if targetDisplayName == "" {
+			targetDisplayName = displayName
+		}
+		if _, updateErr := s.users.Update(ctx, identity.UpdateUserInput{
+			ID:          existing.ID,
+			DisplayName: targetDisplayName,
+			Role:        role,
+			QuotaBytes:  existing.QuotaBytes,
+			IsActive:    true,
+		}); updateErr != nil {
+			return fmt.Errorf("update bootstrap admin identity: %w", updateErr)
+		}
+	}
+
+	if existing.PreferredLanguage == nil || strings.TrimSpace(*existing.PreferredLanguage) == "" {
+		targetDisplayName := strings.TrimSpace(existing.DisplayName)
+		if targetDisplayName == "" {
+			targetDisplayName = displayName
+		}
+		if _, profileErr := s.users.UpdateProfile(ctx, existing.ID, targetDisplayName, preferredLanguage); profileErr != nil {
+			return fmt.Errorf("update bootstrap admin profile: %w", profileErr)
+		}
 	}
 
 	return nil
