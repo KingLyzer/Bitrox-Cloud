@@ -82,6 +82,15 @@ function TreeNode({
         <button
           type="button"
           onClick={() => (isFolder ? onOpenFolder(node) : onOpenFile(node))}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (isFolder) {
+              onOpenFolder(node);
+            } else {
+              onOpenFile(node);
+            }
+          }}
           className="focus-ring flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1.5 text-left"
         >
           <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${typeMeta.wrapClass}`}>

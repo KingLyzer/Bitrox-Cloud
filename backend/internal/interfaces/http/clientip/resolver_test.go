@@ -119,3 +119,22 @@ func TestResolveNormalizesIPv6WithPort(t *testing.T) {
 		t.Fatalf("expected normalized ipv6, got %s", ip)
 	}
 }
+
+func TestResolveUsesCFConnectingIPFromTrustedProxy(t *testing.T) {
+	resolver, err := NewResolver([]string{"10.0.0.0/8"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	req := &http.Request{
+		RemoteAddr: "10.9.8.7:443",
+		Header: http.Header{
+			"Cf-Connecting-Ip": []string{"128.1.1.199"},
+		},
+	}
+
+	ip := resolver.Resolve(req)
+	if ip != "128.1.1.199" {
+		t.Fatalf("expected cf-connecting-ip, got %s", ip)
+	}
+}

@@ -45,6 +45,10 @@ type capturingAdminSettingsRepo struct {
 	lastValue any
 }
 
+func newAdminSettingsTestHandler(repo AdminSettingsRepository) *AdminSettingsHandler {
+	return NewAdminSettingsHandler(NewAdminSettingsService(repo, nil, "."))
+}
+
 func (c *capturingAdminSettingsRepo) List(context.Context) ([]AdminSettingRecord, error) {
 	return nil, nil
 }
@@ -64,7 +68,7 @@ func (c *capturingAdminSettingsRepo) Upsert(_ context.Context, key string, value
 }
 
 func TestAdminSettingsGetRequiresAdminRole(t *testing.T) {
-	h := NewAdminSettingsHandler(fakeAdminSettingsRepo{})
+	h := newAdminSettingsTestHandler(fakeAdminSettingsRepo{})
 
 	noAuthReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
 	noAuthRec := httptest.NewRecorder()
@@ -86,7 +90,7 @@ func TestAdminSettingsGetRequiresAdminRole(t *testing.T) {
 }
 
 func TestAdminSettingsGetReturnsDecodedSettings(t *testing.T) {
-	h := NewAdminSettingsHandler(fakeAdminSettingsRepo{
+	h := newAdminSettingsTestHandler(fakeAdminSettingsRepo{
 		listItems: []AdminSettingRecord{
 			{
 				Key:       "general",
@@ -117,7 +121,7 @@ func TestAdminSettingsGetReturnsDecodedSettings(t *testing.T) {
 }
 
 func TestAdminSettingsUpdateRejectsUnsupportedSection(t *testing.T) {
-	h := NewAdminSettingsHandler(fakeAdminSettingsRepo{})
+	h := newAdminSettingsTestHandler(fakeAdminSettingsRepo{})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/settings/unknown", strings.NewReader(`{"a":1}`))
 	routeCtx := chi.NewRouteContext()
@@ -136,7 +140,7 @@ func TestAdminSettingsUpdateRejectsUnsupportedSection(t *testing.T) {
 }
 
 func TestAdminSettingsGetReturnsSchemaNotReadyWhenTableMissing(t *testing.T) {
-	h := NewAdminSettingsHandler(fakeAdminSettingsRepo{
+	h := newAdminSettingsTestHandler(fakeAdminSettingsRepo{
 		listErr: errors.New(`relation "app_settings" does not exist`),
 	})
 
@@ -154,7 +158,7 @@ func TestAdminSettingsGetReturnsSchemaNotReadyWhenTableMissing(t *testing.T) {
 }
 
 func TestAdminSettingsGetSkipsMalformedStoredSection(t *testing.T) {
-	h := NewAdminSettingsHandler(fakeAdminSettingsRepo{
+	h := newAdminSettingsTestHandler(fakeAdminSettingsRepo{
 		listItems: []AdminSettingRecord{
 			{
 				Key:       "general",
@@ -190,7 +194,7 @@ func TestAdminSettingsGetSkipsMalformedStoredSection(t *testing.T) {
 
 func TestAdminSettingsUpdateGeneralPersistsBrandingFields(t *testing.T) {
 	repo := &capturingAdminSettingsRepo{}
-	h := NewAdminSettingsHandler(repo)
+	h := newAdminSettingsTestHandler(repo)
 
 	body := `{
 		"site_name":"Bitrox Cloud",
@@ -233,7 +237,7 @@ func TestAdminSettingsUpdateGeneralPersistsBrandingFields(t *testing.T) {
 
 func TestAdminSettingsUpdateGeneralRejectsUnsafeLogoURL(t *testing.T) {
 	repo := &capturingAdminSettingsRepo{}
-	h := NewAdminSettingsHandler(repo)
+	h := newAdminSettingsTestHandler(repo)
 
 	body := `{
 		"site_name":"Bitrox Cloud",

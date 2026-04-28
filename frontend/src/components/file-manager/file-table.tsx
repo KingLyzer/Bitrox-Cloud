@@ -102,7 +102,7 @@ export function FileTable({
     if (!(target instanceof HTMLElement)) {
       return false;
     }
-    return !!target.closest('input,button,a,[data-no-row-open="1"]');
+    return !!target.closest('input,button,a,td[data-no-row-open="1"],[data-no-row-open="1"]');
   }, []);
 
   const updateFloatingMenuPosition = useCallback(() => {
@@ -408,7 +408,7 @@ export function FileTable({
                 data-node-name={node.name}
                 data-node-type={node.type}
                 className={`table-row-hover border-b border-[var(--line)] ${
-                  selectedNodeIDForDetails === node.id ? "bg-[var(--bg-soft)] shadow-[inset_3px_0_0_var(--brand)]" : ""
+                  selectedNodeIDForDetails === node.id ? "bg-[var(--brand-soft)]/70 shadow-[inset_4px_0_0_var(--brand)]" : ""
                 }`}
                 onClick={(event) => {
                   if (isRowInteractionTarget(event.target)) {
@@ -432,10 +432,11 @@ export function FileTable({
                   onDownloadNode(node);
                 }}
               >
-                <td className="px-4 py-3">
+                <td className="px-4 py-3" data-no-row-open="1">
                   <input
                     type="checkbox"
                     checked={selected}
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => event.stopPropagation()}
                     onChange={() => onToggleSelectNode(node.id)}
                     data-no-row-open="1"

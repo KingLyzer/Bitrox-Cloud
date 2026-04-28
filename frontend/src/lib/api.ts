@@ -59,6 +59,7 @@ export type NodeRecord = {
   content_hash?: string;
   current_version_id?: string;
   current_version_no?: number;
+  deleted_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -188,6 +189,10 @@ export type OtherSettings = {
   preview_generation_enabled: boolean;
   logging_level: string;
   requires_restart_note: string;
+  system_storage_total_bytes?: number;
+  system_storage_used_bytes?: number;
+  system_storage_free_bytes?: number;
+  system_storage_checked_at?: string;
 };
 
 export type AdminSettings = {
@@ -387,7 +392,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 export function downloadUrlForNode(nodeID: string): string {
-  return buildUrl(`/api/v1/files/download?node_id=${encodeURIComponent(nodeID)}`);
+  return buildUrl(`/api/v1/files/nodes/${encodeURIComponent(nodeID)}/download`);
 }
 
 export async function login(email: string, password: string): Promise<AuthUser> {
@@ -431,6 +436,16 @@ export async function updateMe(input: {
   });
 }
 
+export async function updateMyPassword(input: {
+  current_password: string;
+  new_password: string;
+}): Promise<void> {
+  await request<unknown>("/api/v1/me/password", {
+    method: "PATCH",
+    body: input
+  });
+}
+
 export async function fetchQuota(): Promise<QuotaUsage> {
   return request<QuotaUsage>("/api/v1/quota");
 }
@@ -438,6 +453,22 @@ export async function fetchQuota(): Promise<QuotaUsage> {
 export async function listNodes(parentID: string | null): Promise<NodeRecord[]> {
   const query = parentID ? `?parent_id=${encodeURIComponent(parentID)}` : "";
   const result = await request<{ nodes: NodeRecord[] }>(`/api/v1/files/nodes${query}`);
+  return result.nodes;
+}
+
+export async function searchNodes(input: {
+  query: string;
+  type?: "file" | "folder" | "all";
+  limit?: number;
+}): Promise<NodeRecord[]> {
+  const params = new URLSearchParams();
+  params.set("q", input.query.trim());
+  const type = input.type ?? "all";
+  if (type === "file" || type === "folder") {
+    params.set("type", type);
+  }
+  params.set("limit", String(input.limit ?? 50));
+  const result = await request<{ nodes: NodeRecord[] }>(`/api/v1/files/search?${params.toString()}`);
   return result.nodes;
 }
 
@@ -474,6 +505,30 @@ export async function moveNode(nodeID: string, parentID: string | null): Promise
 
 export async function deleteNode(nodeID: string): Promise<void> {
   await request<unknown>(`/api/v1/files/nodes/${nodeID}`, {
+    method: "DELETE"
+  });
+}
+
+export async function listTrashNodes(): Promise<NodeRecord[]> {
+  const result = await request<{ nodes: NodeRecord[] }>("/api/v1/files/trash");
+  return result.nodes;
+}
+
+export async function restoreTrashNode(nodeID: string): Promise<NodeRecord> {
+  const result = await request<{ node: NodeRecord }>(`/api/v1/files/trash/${encodeURIComponent(nodeID)}/restore`, {
+    method: "POST"
+  });
+  return result.node;
+}
+
+export async function permanentlyDeleteTrashNode(nodeID: string): Promise<void> {
+  await request<unknown>(`/api/v1/files/trash/${encodeURIComponent(nodeID)}`, {
+    method: "DELETE"
+  });
+}
+
+export async function emptyTrash(): Promise<{ deleted_count: number }> {
+  return request<{ deleted_count: number }>("/api/v1/files/trash", {
     method: "DELETE"
   });
 }

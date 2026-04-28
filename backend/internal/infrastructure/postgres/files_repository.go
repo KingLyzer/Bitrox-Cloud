@@ -125,6 +125,245 @@ WHERE owner_user_id = $1
 	return nodes, nil
 }
 
+func (r *FilesRepository) SearchActiveNodesByName(
+	ctx context.Context,
+	ownerUserID uuid.UUID,
+	query string,
+	nodeType *files.NodeType,
+	limit int,
+) ([]files.Node, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	sqlQuery := `
+SELECT id, owner_user_id, parent_id, type, name, size_bytes, mime_type, content_hash, storage_key,
+       current_version_id, current_version_no, deleted_at, created_at, updated_at
+FROM nodes
+WHERE owner_user_id = $1
+  AND deleted_at IS NULL
+  AND lower(name) LIKE lower($2)
+`
+	args := []any{ownerUserID, "%" + strings.TrimSpace(query) + "%"}
+	if nodeType != nil {
+		sqlQuery += "  AND type = $3\n"
+		args = append(args, string(*nodeType))
+	}
+	sqlQuery += "ORDER BY type ASC, lower(name) ASC LIMIT " + fmt.Sprintf("%d", limit)
+
+	rows, err := r.pool.Query(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search active nodes by name: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]files.Node, 0)
+	for rows.Next() {
+		node, scanErr := scanNode(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan searched node row: %w", scanErr)
+		}
+		out = append(out, node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate searched node rows: %w", err)
+	}
+	return out, nil
+}
+
+func (r *FilesRepository) ListDeletedNodes(ctx context.Context, ownerUserID uuid.UUID) ([]files.Node, error) {
+	const query = `
+SELECT id, owner_user_id, parent_id, type, name, size_bytes, mime_type, content_hash, storage_key,
+       current_version_id, current_version_no, deleted_at, created_at, updated_at
+FROM nodes
+WHERE owner_user_id = $1
+  AND deleted_at IS NOT NULL
+ORDER BY deleted_at DESC, lower(name) ASC
+`
+	rows, err := r.pool.Query(ctx, query, ownerUserID)
+	if err != nil {
+		return nil, fmt.Errorf("list deleted nodes: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]files.Node, 0)
+	for rows.Next() {
+		node, scanErr := scanNode(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan deleted node row: %w", scanErr)
+		}
+		out = append(out, node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate deleted node rows: %w", err)
+	}
+	return out, nil
+}
+
+func (r *FilesRepository) RestoreNodeTree(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) (files.Node, error) {
+	const query = `
+WITH RECURSIVE subtree AS (
+    SELECT id
+    FROM nodes
+    WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NOT NULL
+  UNION ALL
+    SELECT n.id
+    FROM nodes n
+    JOIN subtree s ON n.parent_id = s.id
+    WHERE n.owner_user_id = $2 AND n.deleted_at IS NOT NULL
+),
+restored AS (
+    UPDATE nodes
+    SET deleted_at = NULL, updated_at = now()
+    WHERE id IN (SELECT id FROM subtree)
+    RETURNING id
+),
+reparented AS (
+    UPDATE nodes n
+    SET parent_id = NULL, updated_at = now()
+    WHERE n.id IN (SELECT id FROM restored)
+      AND n.parent_id IS NOT NULL
+      AND EXISTS (
+          SELECT 1
+          FROM nodes p
+          WHERE p.id = n.parent_id
+            AND p.owner_user_id = $2
+            AND p.deleted_at IS NOT NULL
+      )
+    RETURNING n.id
+)
+SELECT id FROM restored
+`
+	rows, err := r.pool.Query(ctx, query, nodeID, ownerUserID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return files.Node{}, files.ErrNameConflict
+		}
+		return files.Node{}, fmt.Errorf("restore node tree: %w", err)
+	}
+	defer rows.Close()
+
+	affected := 0
+	for rows.Next() {
+		affected++
+	}
+	if err := rows.Err(); err != nil {
+		return files.Node{}, fmt.Errorf("iterate restored node rows: %w", err)
+	}
+	if affected == 0 {
+		return files.Node{}, files.ErrNodeNotFound
+	}
+	return r.GetActiveNodeByID(ctx, ownerUserID, nodeID)
+}
+
+func (r *FilesRepository) ListStorageKeysForNodeTree(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) ([]string, error) {
+	const query = `
+WITH RECURSIVE subtree AS (
+    SELECT id
+    FROM nodes
+    WHERE id = $1 AND owner_user_id = $2
+  UNION ALL
+    SELECT n.id
+    FROM nodes n
+    JOIN subtree s ON n.parent_id = s.id
+    WHERE n.owner_user_id = $2
+)
+SELECT DISTINCT storage_key
+FROM (
+    SELECT n.storage_key
+    FROM nodes n
+    JOIN subtree s ON s.id = n.id
+    WHERE n.storage_key IS NOT NULL
+  UNION ALL
+    SELECT fv.storage_key
+    FROM file_versions fv
+    JOIN subtree s ON s.id = fv.node_id
+) AS keys
+WHERE storage_key IS NOT NULL
+`
+	rows, err := r.pool.Query(ctx, query, nodeID, ownerUserID)
+	if err != nil {
+		return nil, fmt.Errorf("list storage keys for node tree: %w", err)
+	}
+	defer rows.Close()
+
+	keys := make([]string, 0)
+	for rows.Next() {
+		var key string
+		if scanErr := rows.Scan(&key); scanErr != nil {
+			return nil, fmt.Errorf("scan storage key row: %w", scanErr)
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate storage key rows: %w", err)
+	}
+	return keys, nil
+}
+
+func (r *FilesRepository) HardDeleteNodeTree(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) error {
+	const query = `
+WITH RECURSIVE subtree AS (
+    SELECT id
+    FROM nodes
+    WHERE id = $1 AND owner_user_id = $2
+  UNION ALL
+    SELECT n.id
+    FROM nodes n
+    JOIN subtree s ON n.parent_id = s.id
+    WHERE n.owner_user_id = $2
+)
+DELETE FROM nodes
+WHERE id IN (SELECT id FROM subtree)
+`
+	tag, err := r.pool.Exec(ctx, query, nodeID, ownerUserID)
+	if err != nil {
+		return fmt.Errorf("hard delete node tree: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return files.ErrNodeNotFound
+	}
+	return nil
+}
+
+func (r *FilesRepository) ListDeletedRootNodesBefore(ctx context.Context, before time.Time, limit int) ([]files.Node, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	const query = `
+SELECT n.id, n.owner_user_id, n.parent_id, n.type, n.name, n.size_bytes, n.mime_type, n.content_hash, n.storage_key,
+       n.current_version_id, n.current_version_no, n.deleted_at, n.created_at, n.updated_at
+FROM nodes n
+LEFT JOIN nodes p ON p.id = n.parent_id
+WHERE n.deleted_at IS NOT NULL
+  AND n.deleted_at <= $1
+  AND (n.parent_id IS NULL OR p.deleted_at IS NULL)
+ORDER BY n.deleted_at ASC
+LIMIT $2
+`
+	rows, err := r.pool.Query(ctx, query, before, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list deleted root nodes before cutoff: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]files.Node, 0)
+	for rows.Next() {
+		node, scanErr := scanNode(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan deleted root node row: %w", scanErr)
+		}
+		out = append(out, node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate deleted root node rows: %w", err)
+	}
+	return out, nil
+}
+
 func (r *FilesRepository) IsNodeInSubtree(ctx context.Context, ownerUserID, ancestorNodeID, candidateNodeID uuid.UUID) (bool, error) {
 	const query = `
 WITH RECURSIVE ancestors AS (

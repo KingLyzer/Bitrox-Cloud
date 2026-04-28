@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -79,13 +80,15 @@ const (
 )
 
 type AdminUsersHandler struct {
-	log       *slog.Logger
-	users     AdminUserRepository
-	hasher    AdminPasswordHasher
-	quotas    AdminQuotaPolicyReader
-	usage     AdminUsageReader
-	ownership AdminOwnershipReader
-	audit     AdminAuditReader
+	log         *slog.Logger
+	users       AdminUserRepository
+	hasher      AdminPasswordHasher
+	quotas      AdminQuotaPolicyReader
+	usage       AdminUsageReader
+	ownership   AdminOwnershipReader
+	audit       AdminAuditReader
+	settings    AdminSettingsRepository
+	storageRoot string
 }
 
 func NewAdminUsersHandler(
@@ -96,18 +99,22 @@ func NewAdminUsersHandler(
 	usage AdminUsageReader,
 	ownership AdminOwnershipReader,
 	audit AdminAuditReader,
+	settings AdminSettingsRepository,
+	storageRoot string,
 ) *AdminUsersHandler {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &AdminUsersHandler{
-		log:       log,
-		users:     users,
-		hasher:    hasher,
-		quotas:    quotas,
-		usage:     usage,
-		ownership: ownership,
-		audit:     audit,
+		log:         log,
+		users:       users,
+		hasher:      hasher,
+		quotas:      quotas,
+		usage:       usage,
+		ownership:   ownership,
+		audit:       audit,
+		settings:    settings,
+		storageRoot: storageRoot,
 	}
 }
 
@@ -197,13 +204,20 @@ func (h *AdminUsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "email, display_name and password are required")
 		return
 	}
-	if len(password) < 12 {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "password must be at least 12 characters")
+	securityPolicy := h.loadSecuritySettings(r.Context())
+	if err := validatePasswordByPolicy(password, securityPolicy); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	if req.QuotaBytes != nil && *req.QuotaBytes <= 0 {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "quota_bytes must be greater than zero")
 		return
+	}
+	if req.QuotaBytes != nil {
+		if err := h.validateQuotaAgainstServerCapacity(*req.QuotaBytes); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
 	}
 	if authValue.Role != identity.RoleOwner && role != identity.RoleUser {
 		writeAPIError(w, http.StatusForbidden, "forbidden", "admin can create only user role")
@@ -392,6 +406,10 @@ func (h *AdminUsersHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	} else if req.QuotaBytes != nil {
 		if *req.QuotaBytes <= 0 {
 			writeAPIError(w, http.StatusBadRequest, "invalid_request", "quota_bytes must be greater than zero")
+			return
+		}
+		if err := h.validateQuotaAgainstServerCapacity(*req.QuotaBytes); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
 		value := *req.QuotaBytes
@@ -594,8 +612,9 @@ func (h *AdminUsersHandler) UpdateUserPassword(w http.ResponseWriter, r *http.Re
 	}
 
 	newPassword := strings.TrimSpace(req.NewPassword)
-	if len(newPassword) < 12 {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "new_password must be at least 12 characters")
+	securityPolicy := h.loadSecuritySettings(r.Context())
+	if err := validatePasswordByPolicy(newPassword, securityPolicy); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -625,6 +644,89 @@ func (h *AdminUsersHandler) UpdateUserPassword(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": adminUserToResponse(updated),
 	})
+}
+
+func (h *AdminUsersHandler) loadSecuritySettings(ctx context.Context) SecuritySettings {
+	settings := defaultAdminSettingsSections()
+	section, ok := settings["security"].(map[string]any)
+	if !ok {
+		return SecuritySettings{
+			MinimumPasswordLength: 12,
+			RequireUppercase:      true,
+			RequireLowercase:      true,
+			RequireNumber:         true,
+			RequireSymbol:         false,
+		}
+	}
+	defaultRaw, _ := json.Marshal(section)
+	var policy SecuritySettings
+	_ = json.Unmarshal(defaultRaw, &policy)
+
+	if h.settings == nil {
+		return policy
+	}
+	item, err := h.settings.Get(ctx, "security")
+	if err != nil || len(item.ValueJSON) == 0 {
+		return policy
+	}
+	var persisted SecuritySettings
+	if err := json.Unmarshal(item.ValueJSON, &persisted); err != nil {
+		return policy
+	}
+	if persisted.MinimumPasswordLength > 0 {
+		policy.MinimumPasswordLength = persisted.MinimumPasswordLength
+	}
+	policy.RequireUppercase = persisted.RequireUppercase
+	policy.RequireLowercase = persisted.RequireLowercase
+	policy.RequireNumber = persisted.RequireNumber
+	policy.RequireSymbol = persisted.RequireSymbol
+	return policy
+}
+
+func validatePasswordByPolicy(password string, policy SecuritySettings) error {
+	length := policy.MinimumPasswordLength
+	if length < 8 {
+		length = 8
+	}
+	if len(password) < length {
+		return fmt.Errorf("password must be at least %d characters", length)
+	}
+	if policy.RequireUppercase && !containsAny(password, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		return fmt.Errorf("password must contain at least one uppercase letter")
+	}
+	if policy.RequireLowercase && !containsAny(password, "abcdefghijklmnopqrstuvwxyz") {
+		return fmt.Errorf("password must contain at least one lowercase letter")
+	}
+	if policy.RequireNumber && !containsAny(password, "0123456789") {
+		return fmt.Errorf("password must contain at least one number")
+	}
+	if policy.RequireSymbol && !containsAny(password, `!"#$%&'()*+,-./:;<=>?@[\]^_{|}~`) {
+		return fmt.Errorf("password must contain at least one symbol")
+	}
+	return nil
+}
+
+func containsAny(input string, candidates string) bool {
+	for _, r := range input {
+		if strings.ContainsRune(candidates, r) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *AdminUsersHandler) validateQuotaAgainstServerCapacity(quotaBytes int64) error {
+	if quotaBytes <= 0 || h.storageRoot == "" {
+		return nil
+	}
+	stats, err := readStorageStats(h.storageRoot)
+	if err != nil || stats.TotalBytes <= 0 {
+		return nil
+	}
+	if quotaBytes > stats.TotalBytes {
+		return fmt.Errorf("quota_bytes cannot exceed server storage capacity")
+	}
+	return nil
 }
 
 func (h *AdminUsersHandler) ListAudit(w http.ResponseWriter, r *http.Request) {

@@ -27,6 +27,8 @@ const (
 	defaultUploadReaperBatchSize   = 200
 	defaultReminderScanInterval    = 30 * time.Second
 	defaultReminderScanBatchSize   = 200
+	defaultTrashPurgeInterval      = time.Hour
+	defaultTrashRetention          = 30 * 24 * time.Hour
 )
 
 type Config struct {
@@ -65,6 +67,8 @@ type Config struct {
 	UploadReaperBatchSize   int
 	ReminderScanInterval    time.Duration
 	ReminderScanBatchSize   int
+	TrashPurgeInterval      time.Duration
+	TrashRetention          time.Duration
 }
 
 func Load() (Config, error) {
@@ -161,6 +165,18 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid APP_REMINDER_SCAN_BATCH_SIZE: %w", err)
 	}
 	cfg.ReminderScanBatchSize = reminderScanBatchSize
+
+	trashPurgeInterval, err := getDuration("APP_TRASH_PURGE_INTERVAL", defaultTrashPurgeInterval)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid APP_TRASH_PURGE_INTERVAL: %w", err)
+	}
+	cfg.TrashPurgeInterval = trashPurgeInterval
+
+	trashRetention, err := getDuration("APP_TRASH_RETENTION", defaultTrashRetention)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid APP_TRASH_RETENTION: %w", err)
+	}
+	cfg.TrashRetention = trashRetention
 
 	accessTokenTTL, err := getDuration("APP_ACCESS_TOKEN_TTL", 15*time.Minute)
 	if err != nil {
@@ -260,6 +276,12 @@ func (c Config) validate() error {
 	}
 	if c.ReminderScanBatchSize <= 0 {
 		return fmt.Errorf("APP_REMINDER_SCAN_BATCH_SIZE must be greater than zero")
+	}
+	if c.TrashPurgeInterval <= 0 {
+		return fmt.Errorf("APP_TRASH_PURGE_INTERVAL must be greater than zero")
+	}
+	if c.TrashRetention <= 0 {
+		return fmt.Errorf("APP_TRASH_RETENTION must be greater than zero")
 	}
 	if len(c.CORSOrigins) == 0 {
 		return fmt.Errorf("APP_CORS_ORIGINS must contain at least one origin")

@@ -9,8 +9,8 @@
   --text-main: #0f172a;
   --text-muted: #516079;
   --line: #dbe3ef;
-  --brand: #2563eb;
-  --brand-soft: #dbeafe;
+  --brand: #ff0000;
+  --brand-soft: #ffe1e1;
 }
 
 .dark {
@@ -20,8 +20,8 @@
   --text-main: #e5edf9;
   --text-muted: #9fb0cf;
   --line: #2a3858;
-  --brand: #5b8dff;
-  --brand-soft: #1f2f55;
+  --brand: #ff4d4d;
+  --brand-soft: #4d1f1f;
 }
 
 * {
@@ -31,7 +31,7 @@
 
 body {
   font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
-  background: radial-gradient(circle at 0% 0%, rgba(37, 99, 235, 0.08), transparent 32%), var(--bg-main);
+  background: radial-gradient(circle at 0% 0%, rgba(255, 0, 0, 0.08), transparent 32%), var(--bg-main);
   color: var(--text-main);
 }
 

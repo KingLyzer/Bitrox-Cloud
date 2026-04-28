@@ -36,6 +36,12 @@ type Repository interface {
 	GetNodeByID(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) (domainfiles.Node, error)
 	GetActiveNodeByID(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) (domainfiles.Node, error)
 	ListActiveNodesByParent(ctx context.Context, ownerUserID uuid.UUID, parentID *uuid.UUID) ([]domainfiles.Node, error)
+	SearchActiveNodesByName(ctx context.Context, ownerUserID uuid.UUID, query string, nodeType *domainfiles.NodeType, limit int) ([]domainfiles.Node, error)
+	ListDeletedNodes(ctx context.Context, ownerUserID uuid.UUID) ([]domainfiles.Node, error)
+	RestoreNodeTree(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) (domainfiles.Node, error)
+	ListStorageKeysForNodeTree(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) ([]string, error)
+	HardDeleteNodeTree(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) error
+	ListDeletedRootNodesBefore(ctx context.Context, before time.Time, limit int) ([]domainfiles.Node, error)
 	IsNodeInSubtree(ctx context.Context, ownerUserID, ancestorNodeID, candidateNodeID uuid.UUID) (bool, error)
 	UpdateNodeNameAndParent(ctx context.Context, input domainfiles.UpdateNodeInput) (domainfiles.Node, error)
 	SoftDeleteNodeTree(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID, now time.Time) error
@@ -147,6 +153,26 @@ func (s *Service) ListNodes(ctx context.Context, ownerUserID uuid.UUID, parentID
 	return s.repo.ListActiveNodesByParent(ctx, ownerUserID, parentID)
 }
 
+func (s *Service) SearchNodes(
+	ctx context.Context,
+	ownerUserID uuid.UUID,
+	query string,
+	nodeType *domainfiles.NodeType,
+	limit int,
+) ([]domainfiles.Node, error) {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return []domainfiles.Node{}, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	return s.repo.SearchActiveNodesByName(ctx, ownerUserID, trimmed, nodeType, limit)
+}
+
 func (s *Service) GetNode(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) (domainfiles.Node, error) {
 	return s.repo.GetActiveNodeByID(ctx, ownerUserID, nodeID)
 }
@@ -217,6 +243,71 @@ func (s *Service) MoveNode(ctx context.Context, ownerUserID uuid.UUID, nodeID uu
 
 func (s *Service) DeleteNode(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) error {
 	return s.repo.SoftDeleteNodeTree(ctx, ownerUserID, nodeID, s.clock.Now().UTC())
+}
+
+func (s *Service) ListTrash(ctx context.Context, ownerUserID uuid.UUID) ([]domainfiles.Node, error) {
+	return s.repo.ListDeletedNodes(ctx, ownerUserID)
+}
+
+func (s *Service) RestoreNode(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) (domainfiles.Node, error) {
+	return s.repo.RestoreNodeTree(ctx, ownerUserID, nodeID)
+}
+
+func (s *Service) PermanentlyDeleteNode(ctx context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) error {
+	keys, err := s.repo.ListStorageKeysForNodeTree(ctx, ownerUserID, nodeID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.HardDeleteNodeTree(ctx, ownerUserID, nodeID); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if delErr := s.storage.Delete(ctx, key); delErr != nil {
+			s.log.Warn("failed to cleanup object storage key for hard deleted node", slog.String("storage_key", key), slog.Any("error", delErr))
+		}
+	}
+	return nil
+}
+
+func (s *Service) PermanentlyDeleteAllDeletedNodes(ctx context.Context, ownerUserID uuid.UUID) (int, error) {
+	deletedNodes, err := s.repo.ListDeletedNodes(ctx, ownerUserID)
+	if err != nil {
+		return 0, err
+	}
+	if len(deletedNodes) == 0 {
+		return 0, nil
+	}
+
+	deletedCount := 0
+	for _, node := range deletedNodes {
+		if err := s.PermanentlyDeleteNode(ctx, ownerUserID, node.ID); err != nil {
+			if errors.Is(err, domainfiles.ErrNodeNotFound) {
+				continue
+			}
+			return deletedCount, err
+		}
+		deletedCount++
+	}
+	return deletedCount, nil
+}
+
+func (s *Service) PurgeDeletedNodesBefore(ctx context.Context, before time.Time, limit int) (int, error) {
+	roots, err := s.repo.ListDeletedRootNodesBefore(ctx, before, limit)
+	if err != nil {
+		return 0, err
+	}
+	purged := 0
+	for _, node := range roots {
+		if err := s.PermanentlyDeleteNode(ctx, node.OwnerUserID, node.ID); err != nil {
+			s.log.Warn("failed to purge deleted node tree", slog.String("node_id", node.ID.String()), slog.Any("error", err))
+			continue
+		}
+		purged += 1
+	}
+	return purged, nil
 }
 
 type CreateUploadSessionInput struct {
@@ -590,6 +681,8 @@ func (s *Service) DownloadNode(ctx context.Context, ownerUserID uuid.UUID, nodeI
 	mime := "application/octet-stream"
 	if node.MIMEType != nil && strings.TrimSpace(*node.MIMEType) != "" {
 		mime = strings.TrimSpace(*node.MIMEType)
+	} else if guessedTextMime := inferTextMimeType(node.Name); guessedTextMime != "" {
+		mime = guessedTextMime
 	}
 	return DownloadResult{
 		Reader:    reader,
@@ -865,6 +958,20 @@ func safeDownloadFileName(raw string) string {
 		return "download"
 	}
 	return safe
+}
+
+func inferTextMimeType(fileName string) string {
+	normalized := strings.ToLower(strings.TrimSpace(fileName))
+	switch {
+	case strings.HasSuffix(normalized, ".txt"), strings.HasSuffix(normalized, ".log"), strings.HasSuffix(normalized, ".md"):
+		return "text/plain; charset=utf-8"
+	case strings.HasSuffix(normalized, ".csv"):
+		return "text/csv; charset=utf-8"
+	case strings.HasSuffix(normalized, ".json"):
+		return "application/json; charset=utf-8"
+	default:
+		return ""
+	}
 }
 
 type RealClock struct{}

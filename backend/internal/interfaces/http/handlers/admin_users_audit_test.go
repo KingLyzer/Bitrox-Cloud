@@ -54,7 +54,7 @@ func TestAdminUsersListAuditIncludesClientFields(t *testing.T) {
 			Page:  1,
 			Limit: 20,
 		},
-	})
+	}, nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit", nil)
 	req = req.WithContext(authctx.WithContext(req.Context(), authctx.Context{

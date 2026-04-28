@@ -55,7 +55,7 @@ func (h *PublicSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		"browser_title":    stringValue(general["browser_title"], "BitroxCloud"),
 		"logo_url":         stringValue(general["site_logo_url"], "https://pb.dashboardicons.com/api/files/community_gallery/myyy4r7vdmreido/bitrocloud_ameyfihhth.png"),
 		"favicon_url":      stringValue(general["favicon_url"], ""),
-		"accent_color":     stringValue(general["brand_color"], "#2563eb"),
+		"accent_color":     stringValue(general["brand_color"], "#ff0000"),
 		"public_base_url":  stringValue(general["public_base_url"], ""),
 		"default_language": stringValue(general["default_language"], "en"),
 		"timezone":         stringValue(general["default_timezone"], "UTC"),

@@ -179,14 +179,42 @@ WHERE id = $1
 }
 
 func (r *UserRepository) HardDeleteByID(ctx context.Context, userID uuid.UUID) (bool, error) {
-	const query = `
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin hard delete user transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	const deleteOwnedNodesQuery = `
+DELETE FROM nodes
+WHERE owner_user_id = $1
+`
+	if _, err := tx.Exec(ctx, deleteOwnedNodesQuery, userID); err != nil {
+		return false, fmt.Errorf("hard delete user owned nodes: %w", err)
+	}
+
+	const deleteVersionRefsQuery = `
+DELETE FROM file_versions
+WHERE created_by_user_id = $1
+`
+	if _, err := tx.Exec(ctx, deleteVersionRefsQuery, userID); err != nil {
+		return false, fmt.Errorf("hard delete user file versions: %w", err)
+	}
+
+	const deleteUserQuery = `
 DELETE FROM users
 WHERE id = $1
   AND deleted_at IS NOT NULL
 `
-	tag, err := r.pool.Exec(ctx, query, userID)
+	tag, err := tx.Exec(ctx, deleteUserQuery, userID)
 	if err != nil {
 		return false, fmt.Errorf("hard delete user: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit hard delete user: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
 }

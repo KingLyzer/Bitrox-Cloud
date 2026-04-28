@@ -109,6 +109,52 @@ func (h *FilesHandler) ListNodes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *FilesHandler) SearchNodes(w http.ResponseWriter, r *http.Request) {
+	authValue, ok := authctx.FromContext(r.Context())
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing auth context")
+		return
+	}
+
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"nodes": []map[string]any{}})
+		return
+	}
+
+	var nodeType *domainfiles.NodeType
+	typeRaw := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("type")))
+	if typeRaw == "file" || typeRaw == "folder" {
+		typed := domainfiles.NodeType(typeRaw)
+		nodeType = &typed
+	}
+
+	limit := 50
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid limit")
+			return
+		}
+		limit = parsedLimit
+	}
+
+	nodes, err := h.service.SearchNodes(r.Context(), authValue.UserID, query, nodeType, limit)
+	if err != nil {
+		h.writeFilesError(w, err, "search nodes failed")
+		return
+	}
+
+	resp := make([]map[string]any, 0, len(nodes))
+	for _, node := range nodes {
+		resp = append(resp, nodeToResponse(node))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"nodes": resp,
+	})
+}
+
 func (h *FilesHandler) GetNode(w http.ResponseWriter, r *http.Request) {
 	authValue, ok := authctx.FromContext(r.Context())
 	if !ok {
@@ -228,6 +274,104 @@ func (h *FilesHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 		"node_id": nodeID.String(),
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *FilesHandler) ListTrash(w http.ResponseWriter, r *http.Request) {
+	authValue, ok := authctx.FromContext(r.Context())
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing auth context")
+		return
+	}
+
+	nodes, err := h.service.ListTrash(r.Context(), authValue.UserID)
+	if err != nil {
+		h.writeFilesError(w, err, "list trash failed")
+		return
+	}
+
+	resp := make([]map[string]any, 0, len(nodes))
+	for _, node := range nodes {
+		resp = append(resp, nodeToResponse(node))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"nodes": resp,
+	})
+}
+
+func (h *FilesHandler) RestoreTrashNode(w http.ResponseWriter, r *http.Request) {
+	authValue, ok := authctx.FromContext(r.Context())
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing auth context")
+		return
+	}
+
+	nodeID, err := parseURLParamUUID(r, "nodeID")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid node id")
+		return
+	}
+
+	node, err := h.service.RestoreNode(r.Context(), authValue.UserID, nodeID)
+	if err != nil {
+		h.writeFilesError(w, err, "restore trash node failed")
+		return
+	}
+
+	h.recordAudit(r, authValue, "files.node.restored", "medium", map[string]any{
+		"node_id": nodeID.String(),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"node": nodeToResponse(node),
+	})
+}
+
+func (h *FilesHandler) PermanentlyDeleteTrashNode(w http.ResponseWriter, r *http.Request) {
+	authValue, ok := authctx.FromContext(r.Context())
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing auth context")
+		return
+	}
+
+	nodeID, err := parseURLParamUUID(r, "nodeID")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid node id")
+		return
+	}
+
+	if err := h.service.PermanentlyDeleteNode(r.Context(), authValue.UserID, nodeID); err != nil {
+		h.writeFilesError(w, err, "permanent delete node failed")
+		return
+	}
+
+	h.recordAudit(r, authValue, "files.node.permanently_deleted", "high", map[string]any{
+		"node_id": nodeID.String(),
+	})
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *FilesHandler) EmptyTrash(w http.ResponseWriter, r *http.Request) {
+	authValue, ok := authctx.FromContext(r.Context())
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "missing auth context")
+		return
+	}
+
+	deletedCount, err := h.service.PermanentlyDeleteAllDeletedNodes(r.Context(), authValue.UserID)
+	if err != nil {
+		h.writeFilesError(w, err, "empty trash failed")
+		return
+	}
+
+	h.recordAudit(r, authValue, "files.trash.emptied", "high", map[string]any{
+		"deleted_nodes": deletedCount,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted_count": deletedCount,
+	})
 }
 
 type createUploadSessionRequest struct {

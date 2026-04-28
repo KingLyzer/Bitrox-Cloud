@@ -11,6 +11,7 @@ type Props = {
   emailLocked?: boolean;
   initialValues: AdminUserFormValues;
   busy: boolean;
+  minPasswordLength?: number;
   onClose: () => void;
   onSubmit: (values: AdminUserFormValues) => Promise<void>;
 };
@@ -24,6 +25,7 @@ export function UserModal({
   emailLocked = false,
   initialValues,
   busy,
+  minPasswordLength = 12,
   onClose,
   onSubmit
 }: Props) {
@@ -100,10 +102,12 @@ export function UserModal({
 
           {mode === "create" ? (
             <label className="block md:col-span-2">
-              <span className="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">{t("admin.userModal.tempPassword", "Temporary password (min 12)")}</span>
+              <span className="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">
+                {t("admin.userModal.tempPassword", "Temporary password (min {count})", { count: minPasswordLength })}
+              </span>
               <input
                 required
-                minLength={12}
+                minLength={minPasswordLength}
                 type="password"
                 value={values.password}
                 onChange={(event) => setValues((prev) => ({ ...prev, password: event.target.value }))}

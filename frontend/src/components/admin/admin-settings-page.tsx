@@ -23,7 +23,7 @@ const defaultSettings: AdminSettings = {
     browser_title: "BitroxCloud | Private Cloud",
     site_logo_url: "https://pb.dashboardicons.com/api/files/community_gallery/myyy4r7vdmreido/bitrocloud_ameyfihhth.png",
     favicon_url: "",
-    brand_color: "#2563eb",
+    brand_color: "#ff0000",
     default_storage_quota_bytes: 20 * 1024 * 1024 * 1024,
     default_language: "en",
     default_timezone: "Europe/Istanbul",

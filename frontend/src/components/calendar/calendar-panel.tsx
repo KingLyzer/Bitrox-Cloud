@@ -364,7 +364,7 @@ export function CalendarPanel({ runWithRefresh, showFlash }: Props) {
 
   return (
     <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-      <div className="surface-card rounded-2xl p-4" data-testid="calendar-month-grid">
+      <div className="surface-card rounded-2xl p-4 shadow-sm" data-testid="calendar-month-grid">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-lg font-semibold">{t("calendar.title", "Calendar")}</h2>
@@ -407,8 +407,10 @@ export function CalendarPanel({ runWithRefresh, showFlash }: Props) {
                 type="button"
                 data-testid="calendar-day-cell"
                 onClick={() => openCreateModal(day)}
-                className={`focus-ring min-h-[120px] rounded-xl border p-2 text-left align-top ${
-                  isCurrentMonth ? "border-[var(--line)] bg-[var(--bg-card)]" : "border-[var(--line)] bg-[var(--bg-soft)]/70 text-[var(--text-muted)]"
+                className={`focus-ring min-h-[120px] rounded-xl border p-2 text-left align-top transition ${
+                  isCurrentMonth
+                    ? "border-[var(--line)] bg-[var(--bg-card)] hover:border-[var(--brand)]/35 hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--brand)_22%,transparent)]"
+                    : "border-[var(--line)] bg-[var(--bg-soft)]/70 text-[var(--text-muted)]"
                 }`}
               >
                 <div className="mb-1 flex items-center justify-between">
@@ -421,7 +423,7 @@ export function CalendarPanel({ runWithRefresh, showFlash }: Props) {
                   {dayEvents.slice(0, 3).map((event) => (
                     <div
                       key={event.id}
-                      className="truncate rounded-md bg-[var(--brand-soft)] px-1.5 py-1 text-[11px] text-[var(--brand)]"
+                      className="truncate rounded-md border border-[var(--brand)]/30 bg-[var(--brand-soft)] px-1.5 py-1 text-[11px] font-medium text-[var(--brand)]"
                       onClick={(clickEvent) => {
                         clickEvent.stopPropagation();
                         openEditModal(event);
@@ -443,7 +445,7 @@ export function CalendarPanel({ runWithRefresh, showFlash }: Props) {
       </div>
 
       <aside className="space-y-4">
-        <div className="surface-card rounded-2xl p-4">
+        <div className="surface-card rounded-2xl p-4 shadow-sm">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--text-muted)]">{t("calendar.upcoming", "Upcoming Events")}</h3>
           {upcomingEvents.length === 0 ? (
             <p className="mt-3 text-sm text-[var(--text-muted)]">{t("calendar.upcomingEmpty", "No upcoming events.")}</p>

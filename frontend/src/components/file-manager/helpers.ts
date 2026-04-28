@@ -40,18 +40,12 @@ export function formatBytes(value: number): string {
   return `${current.toFixed(current >= 10 ? 1 : 2)} ${units[idx]}`;
 }
 
-export function formatDateTime(iso: string): string {
+export function formatDateTime(iso: string, locale = "en"): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
     return "-";
   }
-  const runtimeLocale =
-    typeof document !== "undefined" && document.documentElement.lang
-      ? document.documentElement.lang
-      : typeof navigator !== "undefined"
-      ? navigator.language
-      : "en";
-  return new Intl.DateTimeFormat(runtimeLocale, {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(date);

@@ -144,7 +144,7 @@ test.describe("File Manager", () => {
     expect(txtNodeID).toBeTruthy();
     expect(folderNodeID).toBeTruthy();
 
-    const txtResponse = await page.request.get(`/api/v1/files/download?node_id=${encodeURIComponent(txtNodeID ?? "")}`);
+    const txtResponse = await page.request.get(`/api/v1/files/nodes/${encodeURIComponent(txtNodeID ?? "")}/download`);
     expect(txtResponse.ok()).toBeTruthy();
     expect(txtResponse.headers()["content-disposition"]).toContain(".txt");
 
@@ -154,7 +154,7 @@ test.describe("File Manager", () => {
     const txtDownload = await txtDownloadPromise;
     expect(await txtDownload.suggestedFilename()).toContain(".txt");
 
-    const folderResponse = await page.request.get(`/api/v1/files/download?node_id=${encodeURIComponent(folderNodeID ?? "")}`);
+    const folderResponse = await page.request.get(`/api/v1/files/nodes/${encodeURIComponent(folderNodeID ?? "")}/download`);
     expect(folderResponse.ok()).toBeTruthy();
     expect(folderResponse.headers()["content-type"]).toContain("application/zip");
     expect(folderResponse.headers()["content-disposition"]).toContain(".zip");

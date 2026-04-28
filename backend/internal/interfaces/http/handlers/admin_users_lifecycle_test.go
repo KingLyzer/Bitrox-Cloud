@@ -183,7 +183,7 @@ func TestAdminListUsersIncludesInactiveAndDeleted(t *testing.T) {
 		identity.User{ID: uuid.New(), Email: "inactive@example.com", DisplayName: "Inactive", Role: identity.RoleUser, IsActive: false, CreatedAt: now, UpdatedAt: now},
 		identity.User{ID: uuid.New(), Email: "deleted@example.com", DisplayName: "Deleted", Role: identity.RoleUser, IsActive: false, DeletedAt: &deletedAt, CreatedAt: now, UpdatedAt: now},
 	)
-	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil)
+	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil, nil, "")
 
 	req := withAdminAuth(httptest.NewRequest(http.MethodGet, "/api/v1/admin/users?status=all", nil))
 	rec := httptest.NewRecorder()
@@ -219,7 +219,7 @@ func TestAdminCreateUserConflictsForExistingInactiveEmail(t *testing.T) {
 	}
 
 	repo := newStubAdminUserRepo(existing)
-	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil)
+	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil, nil, "")
 
 	body := []byte(`{
 		"email":"pasif@example.com",
@@ -255,7 +255,7 @@ func TestAdminCreateUserCanReactivateExistingInactiveEmail(t *testing.T) {
 	}
 
 	repo := newStubAdminUserRepo(existing)
-	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil)
+	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil, nil, "")
 
 	body := []byte(`{
 		"email":"pasif@example.com",
@@ -293,7 +293,7 @@ func TestAdminDeleteUserPermanentRequiresSoftDeletedUser(t *testing.T) {
 		UpdatedAt:   now,
 	}
 	repo := newStubAdminUserRepo(user)
-	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil)
+	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil, nil, "")
 
 	req := withAdminAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/admin/users/"+user.ID.String()+"?permanent=true", nil))
 	req = withURLParam(req, "userID", user.ID.String())
@@ -319,7 +319,7 @@ func TestAdminDeleteUserPermanentDeletesSoftDeletedUser(t *testing.T) {
 		UpdatedAt:   now,
 	}
 	repo := newStubAdminUserRepo(user)
-	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil)
+	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil, nil, "")
 
 	req := withAdminAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/admin/users/"+user.ID.String()+"?permanent=true", nil))
 	req = withURLParam(req, "userID", user.ID.String())
@@ -347,7 +347,7 @@ func TestAdminUpdateUserPasswordResetsPasswordHash(t *testing.T) {
 		UpdatedAt:    now,
 	}
 	repo := newStubAdminUserRepo(user)
-	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil)
+	h := NewAdminUsersHandler(nil, repo, stubAdminHasher{}, nil, nil, nil, nil, nil, "")
 
 	body := []byte(`{"new_password":"BrandNewPassword123!"}`)
 	req := withAdminAuth(httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/"+user.ID.String()+"/password", bytes.NewReader(body)))

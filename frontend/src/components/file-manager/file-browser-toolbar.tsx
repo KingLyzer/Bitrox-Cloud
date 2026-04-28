@@ -21,6 +21,7 @@ type Props = {
   onGoToFolder: (folderID: string | null, folderName: string) => void;
   onSearchTermChange: (value: string) => void;
   onTypeFilterChange: (value: string) => void;
+  onGlobalSearch: (query: string, typeFilter: string) => void;
   onSetViewMode: (mode: "list" | "grid") => void;
   onUploadFiles: (files: File[]) => void;
   onOpenCreateFolder: () => void;
@@ -42,6 +43,7 @@ export function FileBrowserToolbar({
   onGoToFolder,
   onSearchTermChange,
   onTypeFilterChange,
+  onGlobalSearch,
   onSetViewMode,
   onUploadFiles,
   onOpenCreateFolder,
@@ -120,6 +122,12 @@ export function FileBrowserToolbar({
                 <input
                   value={searchTerm}
                   onChange={(event) => onSearchTermChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      onGlobalSearch(searchTerm, typeFilter);
+                    }
+                  }}
                   placeholder={t("file.searchPlaceholder", "Search by name")}
                   data-testid="search-input"
                   className="focus-ring w-full rounded-lg border border-[var(--line)] bg-[var(--bg-soft)] px-3 py-2 text-sm outline-none"
@@ -136,6 +144,17 @@ export function FileBrowserToolbar({
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onGlobalSearch(searchTerm, typeFilter);
+                    setSearchOpen(false);
+                  }}
+                  data-testid="search-submit-button"
+                  className="focus-ring mt-2 w-full rounded-lg bg-[var(--brand)] px-3 py-2 text-sm font-semibold text-white hover:brightness-110"
+                >
+                  {t("file.searchEverywhere", "Search everywhere")}
+                </button>
               </div>
             ) : null}
           </div>

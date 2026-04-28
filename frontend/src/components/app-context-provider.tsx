@@ -24,7 +24,7 @@ const defaultSettings: PublicSettings = {
   browser_title: "BitroxCloud",
   logo_url: "https://pb.dashboardicons.com/api/files/community_gallery/myyy4r7vdmreido/bitrocloud_ameyfihhth.png",
   favicon_url: "",
-  accent_color: "#2563eb",
+  accent_color: "#ff0000",
   public_base_url: "",
   default_language: "en",
   timezone: "Europe/Istanbul",
@@ -37,6 +37,7 @@ const dictionaries: Record<Locale, Dictionary> = {
 };
 
 const userLocaleStorageKey = "bitrox_locale";
+const userLocaleOverrideStorageKey = "bitrox_locale_explicit";
 
 const AppContext = createContext<AppContextValue | null>(null);
 
@@ -126,27 +127,33 @@ function resolveDocumentTitle(settings: PublicSettings): string {
 }
 
 export function AppContextProvider({ children }: Props) {
-  const [hasStoredLocale, setHasStoredLocale] = useState<boolean>(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    return !!window.localStorage.getItem(userLocaleStorageKey);
-  });
+  const [hasStoredLocale, setHasStoredLocale] = useState(false);
   const [settings, setSettings] = useState<PublicSettings>(defaultSettings);
   const [settingsLoading, setSettingsLoading] = useState(true);
-  const [locale, setLocaleState] = useState<Locale>(() => {
-    if (typeof window === "undefined") {
-      return "en";
-    }
-    return resolveLocale(window.localStorage.getItem(userLocaleStorageKey));
-  });
+  // Keep first server/client render identical to prevent hydration mismatch.
+  const [locale, setLocaleState] = useState<Locale>("en");
 
   const setLocale = useCallback((nextLocale: Locale, persist = true) => {
     setLocaleState(nextLocale);
     if (persist && typeof window !== "undefined") {
       window.localStorage.setItem(userLocaleStorageKey, nextLocale);
+      window.localStorage.setItem(userLocaleOverrideStorageKey, "1");
       setHasStoredLocale(true);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const hasExplicitOverride = window.localStorage.getItem(userLocaleOverrideStorageKey) === "1";
+    const storedLocaleRaw = window.localStorage.getItem(userLocaleStorageKey);
+    if (!storedLocaleRaw || !hasExplicitOverride) {
+      setHasStoredLocale(false);
+      return;
+    }
+    setHasStoredLocale(true);
+    setLocaleState(resolveLocale(storedLocaleRaw));
   }, []);
 
   const refreshSettings = useCallback(async () => {

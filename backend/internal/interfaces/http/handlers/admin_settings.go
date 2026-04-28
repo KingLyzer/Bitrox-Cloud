@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -24,12 +25,98 @@ type AdminSettingRecord struct {
 	ValueJSON json.RawMessage
 }
 
-type AdminSettingsHandler struct {
-	repo AdminSettingsRepository
+type AdminSettingsQuotaPolicyWriter interface {
+	UpsertDefaultUserQuota(ctx context.Context, quotaBytes int64) error
 }
 
-func NewAdminSettingsHandler(repo AdminSettingsRepository) *AdminSettingsHandler {
-	return &AdminSettingsHandler{repo: repo}
+type AdminStorageStats struct {
+	TotalBytes int64 `json:"total_bytes"`
+	UsedBytes  int64 `json:"used_bytes"`
+	FreeBytes  int64 `json:"free_bytes"`
+}
+
+type AdminSettingsService struct {
+	repo        AdminSettingsRepository
+	quotaPolicy AdminSettingsQuotaPolicyWriter
+	storageRoot string
+}
+
+func NewAdminSettingsService(
+	repo AdminSettingsRepository,
+	quotaPolicy AdminSettingsQuotaPolicyWriter,
+	storageRoot string,
+) *AdminSettingsService {
+	return &AdminSettingsService{
+		repo:        repo,
+		quotaPolicy: quotaPolicy,
+		storageRoot: storageRoot,
+	}
+}
+
+func (s *AdminSettingsService) ListSections(ctx context.Context) (map[string]any, error) {
+	response := defaultAdminSettingsSections()
+
+	items, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		var decoded map[string]any
+		if err := json.Unmarshal(item.ValueJSON, &decoded); err != nil {
+			continue
+		}
+		response[item.Key] = decoded
+	}
+
+	if otherSection, ok := response["other"].(map[string]any); ok {
+		stats, err := readStorageStats(s.storageRoot)
+		if err == nil {
+			otherSection["system_storage_total_bytes"] = stats.TotalBytes
+			otherSection["system_storage_used_bytes"] = stats.UsedBytes
+			otherSection["system_storage_free_bytes"] = stats.FreeBytes
+			otherSection["system_storage_checked_at"] = time.Now().UTC()
+		}
+	}
+
+	return response, nil
+}
+
+func (s *AdminSettingsService) UpdateSection(
+	ctx context.Context,
+	section string,
+	payload map[string]any,
+	updatedBy *uuid.UUID,
+) (map[string]any, error) {
+	validated, err := validateSettingsSection(section, payload)
+	if err != nil {
+		return nil, err
+	}
+	item, err := s.repo.Upsert(ctx, section, validated, updatedBy)
+	if err != nil {
+		return nil, err
+	}
+
+	if section == "general" && s.quotaPolicy != nil {
+		if value, ok := validated.(GeneralSettings); ok {
+			if err := s.quotaPolicy.UpsertDefaultUserQuota(ctx, value.DefaultStorageQuotaBytes); err != nil {
+				return nil, fmt.Errorf("sync default user quota policy: %w", err)
+			}
+		}
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(item.ValueJSON, &decoded); err != nil {
+		decoded = toMap(validated)
+	}
+	return decoded, nil
+}
+
+type AdminSettingsHandler struct {
+	service *AdminSettingsService
+}
+
+func NewAdminSettingsHandler(service *AdminSettingsService) *AdminSettingsHandler {
+	return &AdminSettingsHandler{service: service}
 }
 
 type GeneralSettings struct {
@@ -85,21 +172,15 @@ func (h *AdminSettingsHandler) GetSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	response := defaultAdminSettingsSections()
-
-	items, err := h.repo.List(r.Context())
-	if err != nil {
-		writeInternalOrSchemaError(w, err, "failed to list settings")
+	if h.service == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "admin settings service is not configured")
 		return
 	}
 
-	for _, item := range items {
-		var decoded map[string]any
-		if err := json.Unmarshal(item.ValueJSON, &decoded); err != nil {
-			// Keep defaults when persisted payload cannot be decoded.
-			continue
-		}
-		response[item.Key] = decoded
+	response, err := h.service.ListSections(r.Context())
+	if err != nil {
+		writeInternalOrSchemaError(w, err, "failed to list settings")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"settings": response})
@@ -122,22 +203,22 @@ func (h *AdminSettingsHandler) UpdateSection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	validated, err := validateSettingsSection(section, payload)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if h.service == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "service_unavailable", "admin settings service is not configured")
 		return
 	}
 
 	userID := authValue.UserID
-	item, err := h.repo.Upsert(r.Context(), section, validated, &userID)
+	decoded, err := h.service.UpdateSection(r.Context(), section, payload, &userID)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unsupported settings section") ||
+			strings.Contains(strings.ToLower(err.Error()), "must be") ||
+			strings.Contains(strings.ToLower(err.Error()), "required") {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
 		writeInternalOrSchemaError(w, err, "failed to update settings")
 		return
-	}
-
-	var decoded map[string]any
-	if err := json.Unmarshal(item.ValueJSON, &decoded); err != nil {
-		decoded = toMap(validated)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -266,7 +347,7 @@ func defaultAdminSettingsSections() map[string]any {
 			BrowserTitle:             "BitroxCloud",
 			SiteLogoURL:              "https://pb.dashboardicons.com/api/files/community_gallery/myyy4r7vdmreido/bitrocloud_ameyfihhth.png",
 			FaviconURL:               "",
-			BrandColor:               "#2563eb",
+			BrandColor:               "#ff0000",
 			DefaultStorageQuotaBytes: 21474836480,
 			DefaultLanguage:          "en",
 			DefaultTimezone:          "Europe/Istanbul",

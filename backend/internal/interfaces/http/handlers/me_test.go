@@ -36,6 +36,25 @@ func (s *stubMeRepo) UpdateProfile(_ context.Context, userID uuid.UUID, displayN
 	return s.user, nil
 }
 
+func (s *stubMeRepo) UpdatePasswordHash(_ context.Context, userID uuid.UUID, passwordHash string) (identity.User, error) {
+	if s.user.ID != userID {
+		return identity.User{}, identity.ErrUserNotFound
+	}
+	s.user.PasswordHash = passwordHash
+	s.user.UpdatedAt = time.Now().UTC()
+	return s.user, nil
+}
+
+type stubMeHasher struct{}
+
+func (stubMeHasher) Hash(password string) (string, error) {
+	return "hashed:" + password, nil
+}
+
+func (stubMeHasher) Verify(encodedHash string, password string) bool {
+	return encodedHash == password || encodedHash == "hashed:"+password
+}
+
 func TestMeUpdatePersistsDisplayNameAndLanguage(t *testing.T) {
 	userID := uuid.New()
 	repo := &stubMeRepo{
@@ -49,7 +68,7 @@ func TestMeUpdatePersistsDisplayNameAndLanguage(t *testing.T) {
 			UpdatedAt:   time.Now().UTC(),
 		},
 	}
-	h := NewMeHandler(repo)
+	h := NewMeHandler(repo, stubMeHasher{}, nil)
 
 	body := []byte(`{"display_name":"Esat Erhan","preferred_language":"tr"}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me", bytes.NewReader(body))

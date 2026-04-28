@@ -13,6 +13,14 @@ type Props = {
   onDisplayNameChange: (value: string) => void;
   onPreferredLanguageChange: (value: "en" | "tr") => void;
   onSaveProfile: () => void;
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+  onCurrentPasswordChange: (value: string) => void;
+  onNewPasswordChange: (value: string) => void;
+  onConfirmPasswordChange: (value: string) => void;
+  onChangePassword: () => void;
+  passwordSaving: boolean;
   saving: boolean;
   profilePrefs: ProfilePrefs;
   saveProfilePrefs: (prefs: ProfilePrefs) => void;
@@ -28,6 +36,14 @@ export function ProfileSettingsPanel({
   onDisplayNameChange,
   onPreferredLanguageChange,
   onSaveProfile,
+  currentPassword,
+  newPassword,
+  confirmPassword,
+  onCurrentPasswordChange,
+  onNewPasswordChange,
+  onConfirmPasswordChange,
+  onChangePassword,
+  passwordSaving,
   saving,
   profilePrefs,
   saveProfilePrefs,
@@ -127,6 +143,52 @@ export function ProfileSettingsPanel({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="surface-card rounded-2xl p-5">
+        <h3 className="text-base font-semibold">{t("profile.passwordSection", "Change Password")}</h3>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">{t("profile.passwordSectionDesc", "Use at least 12 characters.")}</p>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <label className="block">
+            <span className="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">{t("profile.currentPassword", "Current Password")}</span>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(event) => onCurrentPasswordChange(event.target.value)}
+              className="focus-ring w-full rounded-lg border border-[var(--line)] bg-[var(--bg-soft)] px-3 py-2 text-sm outline-none"
+              data-testid="profile-current-password-input"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">{t("profile.newPassword", "New Password")}</span>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(event) => onNewPasswordChange(event.target.value)}
+              className="focus-ring w-full rounded-lg border border-[var(--line)] bg-[var(--bg-soft)] px-3 py-2 text-sm outline-none"
+              data-testid="profile-new-password-input"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs uppercase tracking-wide text-[var(--text-muted)]">{t("profile.confirmPassword", "Confirm Password")}</span>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => onConfirmPasswordChange(event.target.value)}
+              className="focus-ring w-full rounded-lg border border-[var(--line)] bg-[var(--bg-soft)] px-3 py-2 text-sm outline-none"
+              data-testid="profile-confirm-password-input"
+            />
+          </label>
+        </div>
+        <button
+          type="button"
+          onClick={onChangePassword}
+          disabled={passwordSaving}
+          className="focus-ring mt-4 rounded-lg bg-[var(--brand)] px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-60"
+          data-testid="profile-change-password-button"
+        >
+          {passwordSaving ? t("common.saving", "Saving...") : t("profile.changePassword", "Change Password")}
+        </button>
       </div>
     </section>
   );

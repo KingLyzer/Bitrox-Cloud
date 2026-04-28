@@ -11,11 +11,13 @@ import {
   fetchMe,
   listNotifications,
   listShares,
+  searchNodes,
   fetchQuota,
   listNodes,
   login,
   logout,
   updateMe,
+  updateMyPassword,
   markNotificationRead,
   moveNode,
   type AuthUser,
@@ -34,12 +36,13 @@ import { FileBrowserToolbar } from "@/components/file-manager/file-browser-toolb
 import { FileTable } from "@/components/file-manager/file-table";
 import { SidebarTree } from "@/components/file-manager/sidebar-tree";
 import type { ProfilePrefs } from "@/components/file-manager/profile-settings-panel";
-import { isTextEditableNode, matchesNodeTypeFilter, nodeTypeFilterOptions, type NodeTypeFilter, resolveNodeTypeLabel } from "@/components/file-manager/file-type";
+import { isTextEditableNode, nodeTypeFilterOptions, type NodeTypeFilter, resolveNodeTypeLabel } from "@/components/file-manager/file-type";
 import { ProfileSettingsPanel } from "@/components/file-manager/profile-settings-panel";
 import { useUploadManager } from "@/components/file-manager/use-upload-manager";
 import { WorkspaceHeader } from "@/components/file-manager/workspace-header";
 import { CalendarPanel } from "@/components/calendar/calendar-panel";
 import { SharesPage } from "@/components/file-manager/shares-page";
+import { TrashPage } from "@/components/file-manager/trash-page";
 import {
   cacheKeyForParent,
   formatBytes,
@@ -153,7 +156,7 @@ function extractFileNameFromDisposition(disposition: string | null): string | nu
   return null;
 }
 
-type DashboardPage = "files" | "profile" | "calendar" | "shares";
+type DashboardPage = "files" | "profile" | "calendar" | "shares" | "trash";
 
 type DashboardShellProps = {
   page?: DashboardPage;
@@ -207,6 +210,10 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
   const [profileDisplayName, setProfileDisplayName] = useState("");
   const [profileLanguage, setProfileLanguage] = useState<"en" | "tr">("en");
   const [profileSaving, setProfileSaving] = useState(false);
+  const [profileCurrentPassword, setProfileCurrentPassword] = useState("");
+  const [profileNewPassword, setProfileNewPassword] = useState("");
+  const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
+  const [profilePasswordSaving, setProfilePasswordSaving] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -656,6 +663,43 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
     }
   }, [profileDisplayName, profileLanguage, runWithRefresh, setLocale, showFlash, t, user]);
 
+  const submitChangePassword = useCallback(async () => {
+    const currentPassword = profileCurrentPassword.trim();
+    const newPassword = profileNewPassword.trim();
+    const confirmPassword = profileConfirmPassword.trim();
+
+    if (currentPassword === "" || newPassword === "") {
+      showFlash("error", t("profile.passwordRequired", "Current and new password are required."));
+      return;
+    }
+    if (newPassword.length < 12) {
+      showFlash("error", t("profile.passwordMinLength", "New password must be at least 12 characters."));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showFlash("error", t("profile.passwordMismatch", "New password and confirmation do not match."));
+      return;
+    }
+
+    setProfilePasswordSaving(true);
+    try {
+      await runWithRefresh(() =>
+        updateMyPassword({
+          current_password: currentPassword,
+          new_password: newPassword,
+        })
+      );
+      setProfileCurrentPassword("");
+      setProfileNewPassword("");
+      setProfileConfirmPassword("");
+      showFlash("success", t("profile.passwordChanged", "Password changed successfully."));
+    } catch (error) {
+      showFlash("error", normalizeErrorMessage(error));
+    } finally {
+      setProfilePasswordSaving(false);
+    }
+  }, [profileConfirmPassword, profileCurrentPassword, profileNewPassword, runWithRefresh, showFlash, t]);
+
   const storageUsagePercent = useMemo(() => {
     if (!quota || quota.limitBytes <= 0) {
       return 0;
@@ -696,19 +740,67 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
     [t]
   );
 
-  const filteredNodes = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    return nodes.filter((node) => {
-      if (!matchesNodeTypeFilter(node, typeFilter)) {
-        return false;
-      }
+  const runGlobalSearch = useCallback(
+    async (rawQuery: string, rawTypeFilter: string) => {
+      const query = rawQuery.trim();
       if (query === "") {
-        return true;
+        showFlash("info", t("file.searchEnterTerm", "Enter a search term."));
+        return;
       }
-      return node.name.toLowerCase().includes(query);
-    });
-  }, [nodes, searchTerm, typeFilter]);
-  const hasActiveFilters = searchTerm.trim() !== "" || typeFilter !== "all";
+
+      if (page !== "files") {
+        if (!confirmLeaveIfUploading()) {
+          return;
+        }
+        router.push("/");
+        return;
+      }
+
+      setActionBusy(true);
+      try {
+        const type =
+          rawTypeFilter === "folder"
+            ? "folder"
+            : rawTypeFilter === "file"
+            ? "file"
+            : rawTypeFilter === "document" ||
+              rawTypeFilter === "text" ||
+              rawTypeFilter === "image" ||
+              rawTypeFilter === "video" ||
+              rawTypeFilter === "audio" ||
+              rawTypeFilter === "archive" ||
+              rawTypeFilter === "code" ||
+              rawTypeFilter === "other"
+            ? "file"
+            : "all";
+        const results = await runWithRefresh(() => searchNodes({ query, type, limit: 200 }));
+        if (results.length === 0) {
+          showFlash("info", t("file.searchNoResults", "No results found."));
+          return;
+        }
+
+        const first = results[0];
+        if (first.type === "folder") {
+          await goToFolder(first.id, first.name);
+          setSelectedNodeIDs([first.id]);
+          setSelectedNodeIDForDetails(first.id);
+        } else {
+          await goToFolder(first.parent_id, first.parent_id ? t("file.folder", "Folder") : rootLabel);
+          setSelectedNodeIDs([first.id]);
+          setSelectedNodeIDForDetails(first.id);
+        }
+        showFlash("success", t("file.searchFoundCount", "{count} item(s) found.", { count: results.length }));
+      } catch (error) {
+        showFlash("error", normalizeErrorMessage(error));
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [confirmLeaveIfUploading, goToFolder, page, rootLabel, router, runWithRefresh, showFlash, t]
+  );
+
+  const filteredNodes = useMemo(() => nodes, [nodes]);
+  const hasActiveFilters = false;
 
   const visibleNodes = useMemo(() => sortNodes(filteredNodes, sortKey, sortDirection), [filteredNodes, sortDirection, sortKey]);
 
@@ -1153,7 +1245,7 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
 
   const navigateWithUploadGuard = useCallback(
     (target: string) => {
-      if (target === "/" || target === "/profile" || target === "/calendar" || target === "/admin" || target === "/shares") {
+      if (target === "/" || target === "/profile" || target === "/calendar" || target === "/admin" || target === "/shares" || target === "/trash") {
         if (target !== window.location.pathname && !confirmLeaveIfUploading()) {
           return;
         }
@@ -1321,6 +1413,17 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
                 <i className="fa-regular fa-calendar-days" />
                 {t("sidebar.calendar", "Calendar")}
               </button>
+              <button
+                type="button"
+                onClick={() => navigateWithUploadGuard("/trash")}
+                data-testid="sidebar-nav-trash"
+                className={`focus-ring flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${
+                  activePage === "trash" ? "bg-[var(--brand-soft)] text-[var(--brand)]" : "hover:bg-[var(--bg-soft)]"
+                }`}
+              >
+                <i className="fa-regular fa-trash-can" />
+                {t("sidebar.trash", "Trash")}
+              </button>
             </nav>
 
             <div className="mt-4 min-h-0 flex-1 overflow-y-auto custom-scrollbar">
@@ -1427,6 +1530,8 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
                 ? t("workspace.files", "Files")
                 : activePage === "calendar"
                 ? t("workspace.calendar", "Calendar")
+                : activePage === "trash"
+                ? t("workspace.trash", "Trash")
                 : activePage === "shares"
                 ? t("workspace.shares", "Shares")
                 : t("workspace.profile", "Profile")
@@ -1464,6 +1569,9 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
                 onGoToFolder={(folderID, folderName) => void goToFolder(folderID, folderName)}
                 onSearchTermChange={setSearchTerm}
                 onTypeFilterChange={(value) => setTypeFilter(value as NodeTypeFilter)}
+                onGlobalSearch={(query, nextTypeFilter) => {
+                  void runGlobalSearch(query, nextTypeFilter);
+                }}
                 onSetViewMode={setViewMode}
                 onUploadFiles={(files) => {
                   void handleUploadFiles(files);
@@ -1529,6 +1637,8 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
             </section>
           ) : activePage === "calendar" ? (
             <CalendarPanel runWithRefresh={runWithRefresh} showFlash={showFlash} />
+          ) : activePage === "trash" ? (
+            <TrashPage runWithRefresh={runWithRefresh} showFlash={showFlash} />
           ) : activePage === "shares" ? (
             <SharesPage />
           ) : (
@@ -1540,6 +1650,16 @@ export function DashboardShell({ page = "files" }: DashboardShellProps) {
               onSaveProfile={() => {
                 void submitProfileChanges();
               }}
+              currentPassword={profileCurrentPassword}
+              newPassword={profileNewPassword}
+              confirmPassword={profileConfirmPassword}
+              onCurrentPasswordChange={setProfileCurrentPassword}
+              onNewPasswordChange={setProfileNewPassword}
+              onConfirmPasswordChange={setProfileConfirmPassword}
+              onChangePassword={() => {
+                void submitChangePassword();
+              }}
+              passwordSaving={profilePasswordSaving}
               saving={profileSaving}
               profilePrefs={profilePrefs}
               saveProfilePrefs={saveProfilePrefs}

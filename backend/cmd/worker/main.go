@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	appcalendar "cloud/backend/internal/application/calendar"
 	appfiles "cloud/backend/internal/application/files"
@@ -49,6 +50,13 @@ func main() {
 	filesRepo := infraPg.NewFilesRepository(pgPool)
 	calendarRepo := infraPg.NewCalendarRepository(pgPool)
 	objectStorage := localfs.New(cfg.StorageLocalRoot)
+	filesService := appfiles.NewService(filesRepo, objectStorage, appfiles.RealClock{}, appfiles.Config{
+		UploadSessionTTL:        cfg.UploadSessionTTL,
+		MaxChunkBytes:           cfg.UploadMaxChunkBytes,
+		MaxFileBytes:            cfg.UploadMaxFileBytes,
+		MaxActiveUploadSessions: cfg.UploadMaxActiveSessions,
+		MaxUserStagedBytes:      cfg.UploadMaxStagedBytes,
+	}, log)
 	reaper := appfiles.NewReaper(filesRepo, objectStorage, appfiles.RealClock{}, appfiles.ReaperConfig{
 		Interval:         cfg.UploadReaperInterval,
 		BatchSize:        cfg.UploadReaperBatchSize,
@@ -58,6 +66,32 @@ func main() {
 
 	go reaper.Run(ctx)
 	go reminderProcessor.Run(ctx)
+	go func() {
+		ticker := time.NewTicker(cfg.TrashPurgeInterval)
+		defer ticker.Stop()
+
+		purge := func() {
+			cutoff := time.Now().UTC().Add(-cfg.TrashRetention)
+			purged, purgeErr := filesService.PurgeDeletedNodesBefore(ctx, cutoff, 200)
+			if purgeErr != nil {
+				log.Warn("trash purge cycle failed", slog.Any("error", purgeErr))
+				return
+			}
+			if purged > 0 {
+				log.Info("trash purge completed", slog.Int("purged", purged), slog.Time("cutoff", cutoff))
+			}
+		}
+
+		purge()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				purge()
+			}
+		}
+	}()
 
 	log.Info(
 		"worker started",
@@ -65,6 +99,8 @@ func main() {
 		slog.Int("upload_reaper_batch_size", cfg.UploadReaperBatchSize),
 		slog.Duration("reminder_scan_interval", cfg.ReminderScanInterval),
 		slog.Int("reminder_scan_batch_size", cfg.ReminderScanBatchSize),
+		slog.Duration("trash_purge_interval", cfg.TrashPurgeInterval),
+		slog.Duration("trash_retention", cfg.TrashRetention),
 	)
 
 	sigCh := make(chan os.Signal, 1)

@@ -82,6 +82,80 @@ func (f *fakeRepository) ListActiveNodesByParent(_ context.Context, _ uuid.UUID,
 	return append([]domainfiles.Node(nil), out...), nil
 }
 
+func (f *fakeRepository) SearchActiveNodesByName(_ context.Context, ownerUserID uuid.UUID, query string, nodeType *domainfiles.NodeType, limit int) ([]domainfiles.Node, error) {
+	matches := make([]domainfiles.Node, 0)
+	needle := strings.ToLower(strings.TrimSpace(query))
+	for _, node := range f.nodes {
+		if node.OwnerUserID != ownerUserID || node.DeletedAt != nil {
+			continue
+		}
+		if nodeType != nil && node.Type != *nodeType {
+			continue
+		}
+		if strings.Contains(strings.ToLower(node.Name), needle) {
+			matches = append(matches, node)
+		}
+	}
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+	return matches, nil
+}
+
+func (f *fakeRepository) ListDeletedNodes(_ context.Context, ownerUserID uuid.UUID) ([]domainfiles.Node, error) {
+	deleted := make([]domainfiles.Node, 0)
+	for _, node := range f.nodes {
+		if node.OwnerUserID == ownerUserID && node.DeletedAt != nil {
+			deleted = append(deleted, node)
+		}
+	}
+	return deleted, nil
+}
+
+func (f *fakeRepository) RestoreNodeTree(_ context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) (domainfiles.Node, error) {
+	node, ok := f.nodes[nodeID]
+	if !ok || node.OwnerUserID != ownerUserID || node.DeletedAt == nil {
+		return domainfiles.Node{}, domainfiles.ErrNodeNotFound
+	}
+	node.DeletedAt = nil
+	f.nodes[nodeID] = node
+	return node, nil
+}
+
+func (f *fakeRepository) ListStorageKeysForNodeTree(_ context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) ([]string, error) {
+	node, ok := f.nodes[nodeID]
+	if !ok || node.OwnerUserID != ownerUserID {
+		return nil, domainfiles.ErrNodeNotFound
+	}
+	keys := make([]string, 0)
+	if node.StorageKey != nil {
+		keys = append(keys, *node.StorageKey)
+	}
+	return keys, nil
+}
+
+func (f *fakeRepository) HardDeleteNodeTree(_ context.Context, ownerUserID uuid.UUID, nodeID uuid.UUID) error {
+	node, ok := f.nodes[nodeID]
+	if !ok || node.OwnerUserID != ownerUserID {
+		return domainfiles.ErrNodeNotFound
+	}
+	delete(f.nodes, nodeID)
+	return nil
+}
+
+func (f *fakeRepository) ListDeletedRootNodesBefore(_ context.Context, before time.Time, limit int) ([]domainfiles.Node, error) {
+	nodes := make([]domainfiles.Node, 0)
+	for _, node := range f.nodes {
+		if node.DeletedAt != nil && (node.DeletedAt.Before(before) || node.DeletedAt.Equal(before)) {
+			nodes = append(nodes, node)
+			if limit > 0 && len(nodes) >= limit {
+				break
+			}
+		}
+	}
+	return nodes, nil
+}
+
 func (f *fakeRepository) IsNodeInSubtree(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID) (bool, error) {
 	return f.isDescendantResult, nil
 }

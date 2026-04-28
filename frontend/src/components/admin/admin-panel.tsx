@@ -210,6 +210,11 @@ export function AdminPanel() {
 
   const canAccessAdmin = useMemo(() => (currentUser ? isAdminRole(currentUser.role) : false), [currentUser]);
   const adminBrandName = settings.general.site_name.trim() || publicSettings.site_name.trim() || "BitroxCloud";
+  const minimumPasswordLength = Math.max(8, settings.security.minimum_password_length || 12);
+  const maxQuotaBytes = settings.other.system_storage_total_bytes && settings.other.system_storage_total_bytes > 0
+    ? settings.other.system_storage_total_bytes
+    : null;
+  const maxQuotaGb = maxQuotaBytes ? Math.floor(maxQuotaBytes / BYTES_IN_GB) : null;
   const tabItems = useMemo<Array<{ value: AdminTab; label: string; testID: string }>>(
     () => [
       { value: "general", label: t("admin.tabs.general", "General"), testID: "admin-tab-general" },
@@ -373,7 +378,17 @@ export function AdminPanel() {
     }
   };
 
-  if (!authChecked || !currentUser) {
+  if (!authChecked) {
+    return (
+      <main className="min-h-screen bg-[var(--bg-main)] p-6">
+        <div className="mx-auto max-w-3xl rounded-2xl border border-[var(--line)] bg-[var(--bg-card)] p-6">
+          <p className="text-sm text-[var(--text-muted)]">{t("auth.sessionChecking", "Checking session...")}</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
     return (
       <>
         <AuthView
@@ -503,14 +518,20 @@ export function AdminPanel() {
               onResetPassword={(user) => {
                 const suggestedPassword = `${Math.random().toString(36).slice(2, 8)}A1!${Date.now().toString().slice(-4)}`;
                 const nextPassword = window.prompt(
-                  t("admin.users.resetPasswordPrompt", "Enter a new temporary password (min 12 characters):"),
+                  t("admin.users.resetPasswordPrompt", "Enter a new temporary password (min {count} characters):", {
+                    count: minimumPasswordLength
+                  }),
                   suggestedPassword
                 );
                 if (nextPassword === null) {
                   return;
                 }
-                if (nextPassword.trim().length < 12) {
-                  setError(t("admin.validation.passwordMinLength", "Password must be at least 12 characters."));
+                if (nextPassword.trim().length < minimumPasswordLength) {
+                  setError(
+                    t("admin.validation.passwordMinLength", "Password must be at least {count} characters.", {
+                      count: minimumPasswordLength
+                    })
+                  );
                   return;
                 }
                 setBusyUserID(user.id);
@@ -611,6 +632,13 @@ export function AdminPanel() {
                   .finally(() => setBusyUserID(null));
               }}
             />
+            {maxQuotaGb ? (
+              <p className="mt-2 text-xs text-[var(--text-muted)]">
+                {t("admin.users.serverCapacityHint", "Server total capacity: {gb} GB. User quota cannot exceed this value.", {
+                  gb: maxQuotaGb
+                })}
+              </p>
+            ) : null}
           </section>
         ) : null}
 
@@ -1177,6 +1205,22 @@ export function AdminPanel() {
         {activeTab === "other" ? (
           <section className="surface-card rounded-2xl p-5" data-testid="admin-section-other">
             <h2 className="text-lg font-semibold">{t("admin.tabs.other", "Other")}</h2>
+            {typeof settings.other.system_storage_total_bytes === "number" && settings.other.system_storage_total_bytes > 0 ? (
+              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-[var(--line)] p-3">
+                  <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{t("admin.system.total", "Total")}</p>
+                  <p className="mt-1 text-sm font-semibold">{formatBytes(settings.other.system_storage_total_bytes)}</p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] p-3">
+                  <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{t("admin.system.used", "Used")}</p>
+                  <p className="mt-1 text-sm font-semibold">{formatBytes(settings.other.system_storage_used_bytes ?? 0)}</p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] p-3">
+                  <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{t("admin.system.free", "Free")}</p>
+                  <p className="mt-1 text-sm font-semibold">{formatBytes(settings.other.system_storage_free_bytes ?? 0)}</p>
+                </div>
+              </div>
+            ) : null}
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <SettingsField
                 label={t("admin.settings.other.uploadSessionCleanupSeconds", "Upload session cleanup interval (seconds)")}
@@ -1299,6 +1343,7 @@ export function AdminPanel() {
           title={modalState.title}
           initialValues={modalState.initialValues}
           busy={modalBusy}
+          minPasswordLength={minimumPasswordLength}
           emailLocked={modalState.mode === "edit"}
           onClose={() => setModalState({ open: false })}
           onSubmit={async (values) => {
@@ -1311,8 +1356,19 @@ export function AdminPanel() {
                 if (!values.useDefaultQuota && quotaBytes === null) {
                   throw new Error(t("admin.validation.validQuota", "Enter a valid quota (GB)."));
                 }
-                if (values.password.trim().length < 12) {
-                  throw new Error(t("admin.validation.passwordMinLength", "Password must be at least 12 characters."));
+                if (quotaBytes !== null && maxQuotaBytes !== null && quotaBytes > maxQuotaBytes) {
+                  throw new Error(
+                    t("admin.validation.quotaExceedsServer", "Quota cannot exceed server capacity ({size}).", {
+                      size: formatBytes(maxQuotaBytes)
+                    })
+                  );
+                }
+                if (values.password.trim().length < minimumPasswordLength) {
+                  throw new Error(
+                    t("admin.validation.passwordMinLength", "Password must be at least {count} characters.", {
+                      count: minimumPasswordLength
+                    })
+                  );
                 }
                 try {
                   await createAdminUser({
@@ -1366,6 +1422,13 @@ export function AdminPanel() {
                   const quotaBytes = quotaGbToBytes(values.quotaGb);
                   if (quotaBytes === null) {
                     throw new Error(t("admin.validation.validQuota", "Enter a valid quota (GB)."));
+                  }
+                  if (maxQuotaBytes !== null && quotaBytes > maxQuotaBytes) {
+                    throw new Error(
+                      t("admin.validation.quotaExceedsServer", "Quota cannot exceed server capacity ({size}).", {
+                        size: formatBytes(maxQuotaBytes)
+                      })
+                    );
                   }
                   payload.quotaBytes = quotaBytes;
                   payload.useDefaultQuota = false;

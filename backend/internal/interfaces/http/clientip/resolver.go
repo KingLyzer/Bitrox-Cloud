@@ -63,7 +63,15 @@ func (r *Resolver) Resolve(req *http.Request) string {
 		forwardedChain = parseXForwardedFor(req.Header.Values("X-Forwarded-For"))
 	}
 	if len(forwardedChain) > 0 {
-		return r.pickClientFromChain(forwardedChain, remoteIP)
+		if forwardedClient := r.pickClientFromChain(forwardedChain); forwardedClient != "" {
+			return forwardedClient
+		}
+	}
+
+	for _, headerName := range []string{"CF-Connecting-IP", "True-Client-IP", "X-Client-IP"} {
+		if headerIP := parseIP(req.Header.Get(headerName)); headerIP != "" {
+			return headerIP
+		}
 	}
 
 	if realIP := parseIP(req.Header.Get("X-Real-IP")); realIP != "" {
@@ -121,9 +129,9 @@ func parseIP(raw string) string {
 	return ip.String()
 }
 
-func (r *Resolver) pickClientFromChain(chain []string, remoteIP string) string {
+func (r *Resolver) pickClientFromChain(chain []string) string {
 	if len(chain) == 0 {
-		return remoteIP
+		return ""
 	}
 
 	// Walk right-to-left, skipping trusted proxies.
@@ -134,8 +142,8 @@ func (r *Resolver) pickClientFromChain(chain []string, remoteIP string) string {
 		}
 	}
 
-	// If every value in chain is trusted, keep the oldest one.
-	return chain[0]
+	// If every value in chain is trusted, fallback to more explicit headers.
+	return ""
 }
 
 func parseXForwardedFor(values []string) []string {

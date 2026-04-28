@@ -96,7 +96,7 @@ func NewRouter(
 		RefreshTTL:     cfg.RefreshTokenTTL,
 		AllowedOrigins: cfg.CORSOrigins,
 	}, ipResolver)
-	meHandler := handlers.NewMeHandler(usersRepo)
+	meHandler := handlers.NewMeHandler(usersRepo, passwordHasher, adminSettingsAdapter{repo: settingsRepo})
 	quotaHandler := handlers.NewQuotaHandler(quotaService)
 	filesHandler := handlers.NewFilesHandler(log, filesService, auditRepo)
 	calendarHandler := handlers.NewCalendarHandler(calendarAdapter{repo: calendarRepo})
@@ -106,6 +106,7 @@ func NewRouter(
 		adminSettingsAdapter{repo: settingsRepo},
 		filesDownloadAdapter{service: filesService},
 	)
+	adminSettingsService := handlers.NewAdminSettingsService(adminSettingsAdapter{repo: settingsRepo}, quotaRepo, cfg.StorageLocalRoot)
 	adminUsersHandler := handlers.NewAdminUsersHandler(
 		log,
 		usersRepo,
@@ -114,8 +115,10 @@ func NewRouter(
 		filesRepo,
 		filesRepo,
 		adminAuditReaderAdapter{repo: auditRepo},
+		adminSettingsAdapter{repo: settingsRepo},
+		cfg.StorageLocalRoot,
 	)
-	adminSettingsHandler := handlers.NewAdminSettingsHandler(adminSettingsAdapter{repo: settingsRepo})
+	adminSettingsHandler := handlers.NewAdminSettingsHandler(adminSettingsService)
 	authLimiter := appmw.NewRateLimiter(cfg.AuthRateLimit, cfg.AuthRateWindow, ipResolver)
 	requireAuth := appmw.RequireAuth(authService)
 
@@ -142,6 +145,7 @@ func NewRouter(
 
 		r.With(requireAuth).Get("/me", meHandler.GetMe)
 		r.With(requireAuth).Patch("/me", meHandler.UpdateMe)
+		r.With(requireAuth).Patch("/me/password", meHandler.UpdateMyPassword)
 		r.With(requireAuth).Get("/quota", quotaHandler.GetMyQuota)
 		r.With(requireAuth).Get("/notifications", calendarHandler.ListNotifications)
 		r.With(requireAuth).Patch("/notifications/{notificationID}/read", calendarHandler.MarkNotificationRead)
@@ -149,6 +153,11 @@ func NewRouter(
 		r.Route("/files", func(fr chi.Router) {
 			fr.With(requireAuth).Post("/folders", filesHandler.CreateFolder)
 			fr.With(requireAuth).Get("/nodes", filesHandler.ListNodes)
+			fr.With(requireAuth).Get("/search", filesHandler.SearchNodes)
+			fr.With(requireAuth).Get("/trash", filesHandler.ListTrash)
+			fr.With(requireAuth).Post("/trash/{nodeID}/restore", filesHandler.RestoreTrashNode)
+			fr.With(requireAuth).Delete("/trash/{nodeID}", filesHandler.PermanentlyDeleteTrashNode)
+			fr.With(requireAuth).Delete("/trash", filesHandler.EmptyTrash)
 			fr.With(requireAuth).Get("/nodes/{nodeID}", filesHandler.GetNode)
 			fr.With(requireAuth).Patch("/nodes/{nodeID}/rename", filesHandler.RenameNode)
 			fr.With(requireAuth).Patch("/nodes/{nodeID}/move", filesHandler.MoveNode)
